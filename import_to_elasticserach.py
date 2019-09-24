@@ -8873,7 +8873,13 @@ def import_to_elasticsearch(files, clean):
               "name" : {
 				"type" : "text",
 				"analyzer": "ngram_analyzer",
-				"search_analyzer": "whitespace_analyzer"
+				"search_analyzer": "whitespace_analyzer",
+				"fields" : {
+					"keyword" : {
+						"type" : "keyword",
+						"ignore_above" : 256
+					}
+				}
               }
             }
           },
@@ -9367,12 +9373,14 @@ def import_to_elasticsearch(files, clean):
           },
           "title" : {
             "type" : "text",
-            "fields" : {
-              "keyword" : {
-                "type" : "keyword",
-                "ignore_above" : 256
-              }
-            }
+			"analyzer": "ngram_analyzer",
+			"search_analyzer": "whitespace_analyzer",
+			"fields" : {
+				"keyword" : {
+					"type" : "keyword",
+					"ignore_above" : 256
+				}
+			}			
           },
           "value" : {
             "properties" : {
@@ -9389,6 +9397,86 @@ def import_to_elasticsearch(files, clean):
                 }
               }
             }
+          },
+          "extra" : {
+          	"properties": {
+          		"tenderMainProcurementCategory": {
+                	"type" : "text",
+	                "fields" : {
+	                  "keyword" : {
+	                    "type" : "keyword",
+	                    "ignore_above" : 256
+	                  }
+	                }
+          		},
+          		"tenderAdditionalProcurementCategories": {
+                	"type" : "text",
+	                "fields" : {
+	                  "keyword" : {
+	                    "type" : "keyword",
+	                    "ignore_above" : 256
+	                  }
+	                }
+          		},
+		        "tenderTitle" : {
+		            "type" : "text",
+					"analyzer": "ngram_analyzer",
+					"search_analyzer": "whitespace_analyzer",
+					"fields" : {
+						"keyword" : {
+							"type" : "keyword",
+							"ignore_above" : 256
+						}
+					}					
+		        },
+		        "buyerFullName" : {
+		            "type" : "text",
+					"analyzer": "ngram_analyzer",
+					"search_analyzer": "whitespace_analyzer",
+					"fields" : {
+						"keyword" : {
+							"type" : "keyword",
+							"ignore_above" : 256
+						}
+					}					
+		        },		        
+		        "parent1" : {
+		            "properties" : {
+		              "id" : {
+		                "type" : "text",
+		                "fields" : {
+		                  "keyword" : {
+		                    "type" : "keyword",
+		                    "ignore_above" : 256
+		                  }
+		                }
+		              },
+		              "name" : {
+						"type" : "text",
+						"analyzer": "ngram_analyzer",
+						"search_analyzer": "whitespace_analyzer"
+		              }
+		            }
+		        },
+		        "parent2" : {
+		            "properties" : {
+		              "id" : {
+		                "type" : "text",
+		                "fields" : {
+		                  "keyword" : {
+		                    "type" : "keyword",
+		                    "ignore_above" : 256
+		                  }
+		                }
+		              },
+		              "name" : {
+						"type" : "text",
+						"analyzer": "ngram_analyzer",
+						"search_analyzer": "whitespace_analyzer"
+		              }
+		            }
+		        },          	
+          	}
           }
         }	  
 	  }
@@ -9415,6 +9503,8 @@ def import_to_elasticsearch(files, clean):
 
 		extra = {}
 
+		buyerFullName = ''
+
 		if 'tender' in compiledRelease:
 			if 'title' in compiledRelease['tender']:
 				extra['tenderTitle'] = compiledRelease["tender"]["title"]
@@ -9428,6 +9518,10 @@ def import_to_elasticsearch(files, clean):
 
 		# Obteniendo padres
 		if 'buyer' in compiledRelease:
+
+			if 'name' in compiledRelease["buyer"]:
+				buyerFullName = compiledRelease["buyer"]["name"]
+
 			if 'id' in compiledRelease['buyer']:
 				buyerId = compiledRelease['buyer']['id']
 
@@ -9440,6 +9534,7 @@ def import_to_elasticsearch(files, clean):
 							
 							if parent1 is not None: 
 								extra['parent1'] = parent1
+								buyerFullName = parent1["name"] + ' - ' + buyerFullName
 
 								for p2 in compiledRelease['parties']:
 									if p2['id'] == parent1['id']:
@@ -9451,7 +9546,9 @@ def import_to_elasticsearch(files, clean):
 
 											if parent2 is not None:
 												extra['parent2'] = parent2
+												buyerFullName = parent2["name"] + ' - ' + buyerFullName
 
+		extra['buyerFullName'] = buyerFullName
 
 		for c in compiledRelease["contracts"]:
 			contract_document = {}
@@ -9486,7 +9583,6 @@ def import_to_elasticsearch(files, clean):
 
 					yield document
 
-	print("Record:")
 	result = elasticsearch.helpers.bulk(es, generador(), raise_on_error=False, request_timeout=60)
 
 	pprint(result)
