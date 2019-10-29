@@ -1,4 +1,4 @@
-import json
+# import json
 # import argparse
 # import flattentool
 # import shutil
@@ -13,14 +13,20 @@ import elasticsearch.helpers
 import time
 import ijson
 import datetime
+import dateutil.parser
+import simplejson as json
 
 #Archivos a importar
 pathArchivo = 'archivos_estaticos/pgexport.json'
+# pathArchivo = 'archivos_estaticos/pgexport-sefin.json'
+# pathArchivo = '/otros/pgexport.json'
 pathElastic = 'archivos_estaticos/records.json'
 
 ES_INDEX = os.environ.get("ES_INDEX", "edca")
 
 CONTRACT_INDEX = 'contract' 
+
+TRANSACTION_INDEX = 'transaction'
 
 def contract_to_elastic(contract):
 	pass
@@ -29,42 +35,93 @@ def extra_fields(ijson):
 	separador = ' - '
 	extra = {}
 
-	buyerId = ijson["compiledRelease"]["buyer"]["id"]
 	buyerFullName = ijson["compiledRelease"]["buyer"]["name"]
 	source = ijson["compiledRelease"]["sources"][0]["id"]
 
-	#En los nuevos releases deep siempre debe ser igual a cero.
-	if source == 'catalogo-electronico':
-		deep = 1
-	else:
-		deep = 0
+	compiledRelease = ijson["compiledRelease"]
 
-	for b in ijson["compiledRelease"]["parties"]:
-		if b["id"] == buyerId:
-			if "memberOf" in b:
-				buyerFullName = b["memberOf"][deep]["name"] + separador + buyerFullName
+	# Obteniendo padres
+	if 'buyer' in compiledRelease:
 
-				for p in ijson["compiledRelease"]["parties"]:
-					if p["id"] == b["memberOf"][deep]["id"]:
-						if "memberOf" in p:
-							buyerFullName = p["memberOf"][0]["name"] + separador + buyerFullName
+		if 'name' in compiledRelease["buyer"]:
+			buyerFullName = compiledRelease["buyer"]["name"]
+		else:
+			buyerFullName = 'No proveido'
 
-	extra["buyer"] = {
-		"id": buyerId,
-		"fullName": buyerFullName
-	}
+		if 'id' in compiledRelease['buyer']:
+			buyerId = compiledRelease['buyer']['id']
+
+			for p in compiledRelease['parties']:
+				if p['id'] == buyerId:
+					if 'memberOf' in p:
+						parent1 = None
+						for m in p['memberOf']:
+							parent1 = m
+						
+						if parent1 is not None: 
+							extra['parent1'] = parent1
+							buyerFullName = parent1["name"] + ' - ' + buyerFullName
+							parentTop = parent1
+
+							for p2 in compiledRelease['parties']:
+								if p2['id'] == parent1['id']:
+									if 'memberOf' in p2:
+										parent2 = None
+										for m2 in p2['memberOf']:
+											if m2['id'] != parent1['id']:
+												parent2 = m2
+
+										if parent2 is not None:
+											extra['parent2'] = parent2
+											buyerFullName = parent2["name"] + ' - ' + buyerFullName
+											parentTop = parent2
+					else:
+						parentTop = compiledRelease["buyer"]
+
+			buyer = parentTop
+		else:
+			buyer = None
+
+		extra["buyerFullName"] = buyerFullName
+		extra["parentTop"] = parentTop
+
+	# Suma de contratos en tender
+	if 'tender' in compiledRelease and 'contracts' in compiledRelease:
+		sumContracts = 0
+		for c in compiledRelease["contracts"]:
+			if 'value' in c: 
+				sumContracts += c["value"]["amount"]
+
+		compiledRelease["tender"]["extra"] = {
+			"sumContracts": sumContracts
+		}
+
+	# Etapa del proceso de contratacion 
+	extra["lastSection"] = None
+
+	if 'tender' in compiledRelease:
+		extra["lastSection"] = 'tender'
+
+	if 'awards' in compiledRelease:
+		extra["lastSection"] = 'awards'
+
+	if 'contracts' in compiledRelease:
+		extra["lastSection"] = 'contracts'
 
 	return extra
 
 def import_to_elasticsearch(files, clean):
 
 	es = elasticsearch.Elasticsearch()
+	# es = elasticsearch.Elasticsearch('http://200.13.162.87:9200/')
 
 	# Delete the index
 	if clean:
 		result = es.indices.delete(index=ES_INDEX, ignore=[404])
 		pprint(result)
 		result = es.indices.delete(index=CONTRACT_INDEX, ignore=[404])
+		pprint(result)
+		result = es.indices.delete(index=TRANSACTION_INDEX, ignore=[404])
 		pprint(result)
 
 	mappings = {
@@ -270,15 +327,17 @@ def import_to_elasticsearch(files, clean):
 	                      }
 	                    }
 	                  },
-	                  "name" : {
-	                    "type" : "text",
-	                    "fields" : {
-	                      "keyword" : {
-	                        "type" : "keyword",
-	                        "ignore_above" : 256
-	                      }
-	                    }
-	                  }
+		              "name" : {
+						"type" : "text",
+						"analyzer": "ngram_analyzer",
+						"search_analyzer": "whitespace_analyzer",
+						"fields" : {
+							"keyword" : {
+								"type" : "keyword",
+								"ignore_above" : 256
+							}
+						}
+		              }
 	                }
 	              },
 	              "contracts" : {
@@ -1592,13 +1651,15 @@ def import_to_elasticsearch(files, clean):
 	                    }
 	                  },
 	                  "procurementMethodDetails" : {
-	                    "type" : "text",
-	                    "fields" : {
-	                      "keyword" : {
-	                        "type" : "keyword",
-	                        "ignore_above" : 256
-	                      }
-	                    }
+						"type" : "text",
+						"analyzer": "ngram_analyzer",
+						"search_analyzer": "whitespace_analyzer",
+						"fields" : {
+							"keyword" : {
+								"type" : "keyword",
+								"ignore_above" : 256
+							}
+						}	
 	                  },
 	                  "procuringEntity" : {
 	                    "properties" : {
@@ -1664,26 +1725,30 @@ def import_to_elasticsearch(files, clean):
 	                    }
 	                  },
 	                  "title" : {
-	                    "type" : "text",
-	                    "fields" : {
-	                      "keyword" : {
-	                        "type" : "keyword",
-	                        "ignore_above" : 256
-	                      }
-	                    }
+						"type" : "text",
+						"analyzer": "ngram_analyzer",
+						"search_analyzer": "whitespace_analyzer",
+						"fields" : {
+							"keyword" : {
+								"type" : "keyword",
+								"ignore_above" : 256
+							}
+						}	
 	                  }
 	                }
 	              }
 	            }
 	          },
 	          "ocid" : {
-	            "type" : "text",
-	            "fields" : {
-	              "keyword" : {
-	                "type" : "keyword",
-	                "ignore_above" : 256
-	              }
-	            }
+				"type" : "text",
+				"analyzer": "ngram_analyzer",
+				"search_analyzer": "whitespace_analyzer",
+				"fields" : {
+					"keyword" : {
+						"type" : "keyword",
+						"ignore_above" : 256
+					}
+				}	
 	          },
 	          "releases" : {
 	            "properties" : {
@@ -8751,7 +8816,83 @@ def import_to_elasticsearch(files, clean):
 	            }
 	          }
 	        }
-	      }
+	      },
+          "extra" : {
+          	"properties": {
+		        "buyerFullName" : {
+		            "type" : "text",
+					"analyzer": "ngram_analyzer",
+					"search_analyzer": "whitespace_analyzer",
+					"fields" : {
+						"keyword" : {
+							"type" : "keyword",
+							"ignore_above" : 256
+						}
+					}					
+		        },		        
+		        "parent1" : {
+		            "properties" : {
+		              "id" : {
+		                "type" : "text",
+		                "fields" : {
+		                  "keyword" : {
+		                    "type" : "keyword",
+		                    "ignore_above" : 256
+		                  }
+		                }
+		              },
+		              "name" : {
+						"type" : "text",
+						"analyzer": "ngram_analyzer",
+						"search_analyzer": "whitespace_analyzer"
+		              }
+		            }
+		        },
+		        "parent2" : {
+		            "properties" : {
+		              "id" : {
+		                "type" : "text",
+		                "fields" : {
+		                  "keyword" : {
+		                    "type" : "keyword",
+		                    "ignore_above" : 256
+		                  }
+		                }
+		              },
+		              "name" : {
+						"type" : "text",
+						"analyzer": "ngram_analyzer",
+						"search_analyzer": "whitespace_analyzer"
+		              }
+		            }
+		        },
+		        "parentTop" : {
+		            "properties" : {
+		              "id" : {
+		                "type" : "text",
+		                "fields" : {
+		                  "keyword" : {
+		                    "type" : "keyword",
+		                    "ignore_above" : 256
+		                  }
+		                }
+		              },
+		              "name" : {
+						"type" : "text",
+						"analyzer": "ngram_analyzer",
+						"search_analyzer": "whitespace_analyzer",
+		                "fields" : {
+		                  "keyword" : {
+		                    "type" : "keyword",
+		                    "ignore_above" : 256
+		                  }
+		                }						
+		              }
+		            }
+		        },   		        
+          	}
+          }
+
 	    }
 	  }
 	}
@@ -9145,6 +9286,7 @@ def import_to_elasticsearch(files, clean):
                 }
               },
               "transactions" : {
+              	"type": "nested",
                 "properties" : {
                   "budgetSources" : {
                     "type" : "text",
@@ -9188,13 +9330,15 @@ def import_to_elasticsearch(files, clean):
                         }
                       },
                       "name" : {
-                        "type" : "text",
-                        "fields" : {
-                          "keyword" : {
-                            "type" : "keyword",
-                            "ignore_above" : 256
-                          }
-                        }
+			            "type" : "text",
+						"analyzer": "ngram_analyzer",
+						"search_analyzer": "whitespace_analyzer",
+						"fields" : {
+							"keyword" : {
+								"type" : "keyword",
+								"ignore_above" : 256
+							}
+						}	
                       }
                     }
                   },
@@ -9254,13 +9398,15 @@ def import_to_elasticsearch(files, clean):
               "classification" : {
                 "properties" : {
                   "description" : {
-                    "type" : "text",
-                    "fields" : {
-                      "keyword" : {
-                        "type" : "keyword",
-                        "ignore_above" : 256
-                      }
-                    }
+		            "type" : "text",
+					"analyzer": "ngram_analyzer",
+					"search_analyzer": "whitespace_analyzer",
+					"fields" : {
+						"keyword" : {
+							"type" : "keyword",
+							"ignore_above" : 256
+						}
+					}	
                   },
                   "id" : {
                     "type" : "text",
@@ -9482,28 +9628,233 @@ def import_to_elasticsearch(files, clean):
 	  }
 	}
 
+	transaction_mapping = {
+		"transactions" : {
+			"properties" : {
+			  "budgetSources" : {
+			    "type" : "text",
+			    "fields" : {
+			      "keyword" : {
+			        "type" : "keyword",
+			        "ignore_above" : 256
+			      }
+			    }
+			  },
+			  "date" : {
+			    "type" : "date"
+			  },
+			  "financialObligationIds" : {
+			    "type" : "text",
+			    "fields" : {
+			      "keyword" : {
+			        "type" : "keyword",
+			        "ignore_above" : 256
+			      }
+			    }
+			  },
+			  "id" : {
+			    "type" : "text",
+			    "fields" : {
+			      "keyword" : {
+			        "type" : "keyword",
+			        "ignore_above" : 256
+			      }
+			    }
+			  },
+			  "payee" : {
+			    "properties" : {
+			      "id" : {
+			        "type" : "text",
+			        "fields" : {
+			          "keyword" : {
+			            "type" : "keyword",
+			            "ignore_above" : 256
+			          }
+			        }
+			      },
+			      "name" : {
+			        "type" : "text",
+			        "fields" : {
+			          "keyword" : {
+			            "type" : "keyword",
+			            "ignore_above" : 256
+			          }
+			        }
+			      }
+			    }
+			  },
+			  "payer" : {
+			    "properties" : {
+			      "id" : {
+			        "type" : "text",
+			        "fields" : {
+			          "keyword" : {
+			            "type" : "keyword",
+			            "ignore_above" : 256
+			          }
+			        }
+			      },
+			      "name" : {
+			        "type" : "text",
+			        "fields" : {
+			          "keyword" : {
+			            "type" : "keyword",
+			            "ignore_above" : 256
+			          }
+			        }
+			      }
+			    }
+			  },
+			  "uri" : {
+			    "type" : "text",
+			    "fields" : {
+			      "keyword" : {
+			        "type" : "keyword",
+			        "ignore_above" : 256
+			      }
+			    }
+			  },
+			  "value" : {
+			    "properties" : {
+			      "amount" : {
+			        "type" : "float"
+			      },
+			      "currency" : {
+			        "type" : "text",
+			        "fields" : {
+			          "keyword" : {
+			            "type" : "keyword",
+			            "ignore_above" : 256
+			          }
+			        }
+			      }
+			    }
+			  }
+			}
+		},
+		"extra" : {
+			"properties": {
+				"buyerFullName" : {
+					"type" : "text",
+					"analyzer": "ngram_analyzer",
+					"search_analyzer": "whitespace_analyzer",
+					"fields" : {
+						"keyword" : {
+							"type" : "keyword",
+							"ignore_above" : 256
+						}
+					}
+				},
+				"parent1" : {
+					"properties" : {
+					"id" : {
+						"type" : "text",
+						"fields" : {
+							"keyword" : {
+								"type" : "keyword",
+								"ignore_above" : 256
+							}
+						}
+					},
+					"name" : {
+						"type" : "text",
+						"analyzer": "ngram_analyzer",
+						"search_analyzer": "whitespace_analyzer"
+					}
+				}
+				},
+				"parent2" : {
+					"properties" : {
+						"id" : {
+							"type" : "text",
+							"fields" : {
+								"keyword" : {
+									"type" : "keyword",
+									"ignore_above" : 256
+								}
+							}
+						},
+						"name" : {
+							"type" : "text",
+							"analyzer": "ngram_analyzer",
+							"search_analyzer": "whitespace_analyzer"
+						}
+					}
+				},
+				"ocid": {
+					"type" : "text",
+					"fields" : {
+						"keyword" : {
+							"type" : "keyword",
+							"ignore_above" : 256
+						}
+					}
+				},
+				"contractId": {
+					"type" : "text",
+					"fields" : {
+						"keyword" : {
+							"type" : "keyword",
+							"ignore_above" : 256
+						}
+					}
+				},				
+			}
+		}
+	}
+
 	# Create it again
 	result = es.indices.create(index=ES_INDEX, body={"mappings": mappings, "settings": settings}, ignore=[400])
 
-	if 'error' in result and result['error']['reason'] == 'already exists':
+	if 'error' in result and result['error']['reason'] == 'index EDCA already exists':
 		print('Updating existing index')
 	else:
 		pprint(result)
 
 	result = es.indices.create(index=CONTRACT_INDEX, body={"mappings": contract_mapping, "settings": settings}, ignore=[400])
 
-	if 'error' in result and result['error']['reason'] == 'already exists':
+	if 'error' in result and result['error']['reason'] == 'index contract already exists':
+		print('Updating existing index')
+	else:
+		pprint(result)
+
+	result = es.indices.create(index=TRANSACTION_INDEX, body={"mappings": transaction_mapping, "settings": settings}, ignore=[400])
+
+	if 'error' in result and result['error']['reason'] == 'index transaction already exists':
 		print('Updating existing index')
 	else:
 		pprint(result)
 
 	time.sleep(1)
 
+	def transaction_generator(contract):
+		if '_source' in contract:
+			if 'implementation' in contract["_source"]:
+				if 'transactions' in contract["_source"]["implementation"]:
+					for t in contract["_source"]["implementation"]["transactions"]:
+
+						extra = contract["_source"]["extra"]
+						extra["contractId"] = contract["_source"]["id"]
+
+						transaction_document = {}
+						transaction_document['_id'] = str(uuid.uuid4())
+						transaction_document['_index'] = TRANSACTION_INDEX
+						transaction_document['_type'] = 'transaction'
+						transaction_document['_source'] = t
+						transaction_document['_source']['extra'] = extra
+
+						yield transaction_document		
+
 	def contract_generator(compiledRelease):
 
 		extra = {}
 
+		parentTop = {}
+
 		buyerFullName = ''
+
+		if 'ocid' in compiledRelease:
+			extra["ocid"] = compiledRelease["ocid"]
 
 		if 'tender' in compiledRelease:
 			if 'title' in compiledRelease['tender']:
@@ -9525,6 +9876,8 @@ def import_to_elasticsearch(files, clean):
 			if 'id' in compiledRelease['buyer']:
 				buyerId = compiledRelease['buyer']['id']
 
+				parentTop = compiledRelease['buyer']
+
 				for p in compiledRelease['parties']:
 					if p['id'] == buyerId:
 						if 'memberOf' in p:
@@ -9534,6 +9887,7 @@ def import_to_elasticsearch(files, clean):
 							
 							if parent1 is not None: 
 								extra['parent1'] = parent1
+								parentTop = parent1
 								buyerFullName = parent1["name"] + ' - ' + buyerFullName
 
 								for p2 in compiledRelease['parties']:
@@ -9546,9 +9900,40 @@ def import_to_elasticsearch(files, clean):
 
 											if parent2 is not None:
 												extra['parent2'] = parent2
+												parentTop = parent2
 												buyerFullName = parent2["name"] + ' - ' + buyerFullName
 
 		extra['buyerFullName'] = buyerFullName
+		extra['parentTop'] = parentTop
+
+		if 'contracts' in compiledRelease:
+			extra["sumTransactions"] = 0
+			for c in compiledRelease["contracts"]:
+				if 'implementation' in c:
+					if 'transactions' in c["implementation"]:
+						transactionLastDate = None
+						for t in c["implementation"]["transactions"]:
+							extra["sumTransactions"] += t["value"]["amount"]
+
+							if transactionLastDate is None: 
+								transactionLastDate = t["date"]
+							else:
+								if t["date"] > transactionLastDate:
+									transactionLastDate = t["date"]	
+
+							extra["transactionLastDate"] = transactionLastDate
+
+		extra['fuentes'] = []
+		extra['objetosGasto'] = []
+
+		if 'planning' in compiledRelease:
+			if 'budget' in compiledRelease['planning']:
+				if 'budgetBreakdown' in compiledRelease['planning']['budget']:
+					for b in compiledRelease['planning']['budget']['budgetBreakdown']:
+						if 'classifications' in b:
+							if 'fuente' in b['classifications']:
+								extra['fuentes'].append(b['classifications']['fuente'])
+								extra['objetosGasto'].append(b['classifications']['objeto'])
 
 		for c in compiledRelease["contracts"]:
 			contract_document = {}
@@ -9557,6 +9942,10 @@ def import_to_elasticsearch(files, clean):
 			contract_document['_type'] = 'contract'
 			contract_document['_source'] = c
 			contract_document['_source']['extra'] = extra
+
+			if 'implementation' in c:
+				result = elasticsearch.helpers.bulk(es, transaction_generator(contract_document), raise_on_error=False, request_timeout=60)
+				print("transaction", result)
 
 			yield contract_document		
 
@@ -9568,30 +9957,38 @@ def import_to_elasticsearch(files, clean):
 
 			with open(file_name) as fp:
 				for record in ijson.items(fp, 'item'):
-					document = {}
-					document['_id'] = str(uuid.uuid4())
-					document['_index'] = ES_INDEX
-					document['_type'] = 'record'
-					document['doc'] = record
-					# document['extra'] = extra_fields(record)
-
 					if 'compiledRelease' in record:
-						if 'contracts' in record['compiledRelease']:
-							print("contract:")
-							result = elasticsearch.helpers.bulk(es, contract_generator(record['compiledRelease']), raise_on_error=False, request_timeout=60)
-							pprint(result)
+						if 'date' in record["compiledRelease"]:
+							year = record['compiledRelease']["date"][0:4]
+							if year:
 
-					yield document
+								document = {}
+								document['_id'] = str(uuid.uuid4())
+								document['_index'] = ES_INDEX
+								document['_type'] = 'record'
+								document['doc'] = record
+								document['extra'] = extra_fields(record)
+
+								if 'compiledRelease' in record:
+									if 'contracts' in record['compiledRelease']:
+										result = elasticsearch.helpers.bulk(es, contract_generator(record['compiledRelease']), raise_on_error=False, request_timeout=60)
+										print("contract", result)
+
+								yield document
+							else:
+								pass
 
 	result = elasticsearch.helpers.bulk(es, generador(), raise_on_error=False, request_timeout=60)
 
-	pprint(result)
+	print("record", result)
 
-def generate_json_valid(file):
+def generate_json_valid(file, outfile):
 	cantidad_registros = 0
 	contador = 0
 
-	f = open("archivos_estaticos/records.json", "w")
+	output_file = "archivos_estaticos/" + outfile
+
+	f = open(output_file, "w")
 	f.write('[')
 
 	with open(file) as infile:
@@ -9612,18 +10009,123 @@ def generate_json_valid(file):
 	f.write(']')
 	f.close()
 
+def generarRecordsPorYear(file, year):
+	contador = 0
+	years = ['2017', '2018', '2019']
+
+	archivos = [] 
+
+	with open(file) as fp:
+		for record in ijson.items(fp, 'item'):
+			i_year = ''
+
+			file_name = 'todos.json'
+
+			if 'compiledRelease' in record:
+				if 'sources' in record['compiledRelease']:
+					if len(record['compiledRelease']["sources"]) > 0:
+							file_name = record['compiledRelease']["sources"][0]["id"]
+
+				if 'date' in record['compiledRelease']:
+					i_year = record['compiledRelease']["date"][0:4]
+					file_name += "_" + i_year + ".json"
+
+			# if i_year in years:		
+			# 	f = open('archivos_estaticos/records/' + file_name, "a")
+			# 	f.write(json.dumps(record))
+			# 	f.write(',')
+			# 	f.close()
+
+			if file_name in archivos:
+				f = open('archivos_estaticos/records/' + file_name, "a")
+				f.write(json.dumps(record))
+				f.write(',')
+				f.close()
+			else:
+				f = open('archivos_estaticos/records/' + file_name, "a")
+				f.write('[')
+				f.close()
+				archivos.append(file_name)
+
+			if contador == 20:
+				break
+
+			contador += 1
+			print('contador', contador)
+
+	for a in archivos:
+		print('Cerrando archivos', a)
+		f = open('archivos_estaticos/records/' + a, "a")
+		f.write(']')
+		f.close()		
+
+	print('Contador: ', contador)
+
+def generarArchivosEstaticos(file):
+	contador = 0
+
+	archivos = [] 
+
+	with open(file) as fp:
+		for release in ijson.items(fp, 'item'):
+			file_name = 'todos.json'
+
+			if 'sources' in release:
+				if len(release["sources"]) > 0:
+					file_name = release["sources"][0]["id"]
+
+			if 'date' in release:
+				file_name += "_" + release["date"][0:4] + ".json"
+
+			if file_name in Archivos:
+				f = open('archivos_estaticos/releases/' + file_name, "a")
+				f.write(json.dumps(release))
+				f.write(',')
+				f.close()
+			else:
+				f = open('archivos_estaticos/releases/' + file_name, "a")
+				f.write('[')
+				f.close()
+				archivos.append(file_name)
+
+			if contador == 20:
+				break
+
+			contador += 1
+
+	for a in archivos:
+		f = open('archivos_estaticos/releases/' + a, "a")
+		f.write(']')
+		f.close()		
+
+	print('Contador: ', contador)
+
 # Importando datos 
 startDate = datetime.datetime.now()
-print("Fecha y hora inicio de la conversión: ", startDate)
+print("Fecha y hora inicio de la conversion: ", startDate)
 
-generate_json_valid(pathArchivo)
 
-import_to_elasticsearch([pathElastic,], True)
+#Generando archivos estaticos
+
+# file_releases = 'archivos_estaticos/pgexport_releases.json'
+# generate_json_valid(file_releases, 'releases.json')
+# generarArchivosEstaticos('archivos_estaticos/releases.json')
+
+# Fin Generando archivos estaticos
+
+# generate_json_valid(pathArchivo, 'records.json')
+
+# pathElastic = 'archivos_estaticos/records-sefin.json'
+import_to_elasticsearch([pathElastic,], False)
+
+#Generando records por año: 
+
+# generarRecordsPorYear('archivos_estaticos/records-sefin.json', ['2018','2019','2017'])
 
 #Datos para la db intermedia 
 endDate = datetime.datetime.now()
 elapsedTime = endDate-startDate
 minutes = (elapsedTime.seconds) / 60
 
-print("Fecha y hora fin de la conversión: ", endDate)
+print("Fecha y hora fin de la conversion: ", endDate)
 print("Tiempo transcurrido: " + str(minutes) + " minutos")
