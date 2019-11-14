@@ -13,7 +13,7 @@ import elasticsearch.helpers
 import time
 import ijson
 import datetime
-import dateutil.parser
+import dateutil.parser, dateutil.tz
 import simplejson as json
 
 #Archivos a importar
@@ -108,11 +108,20 @@ def extra_fields(ijson):
 	if 'contracts' in compiledRelease:
 		extra["lastSection"] = 'contracts'
 
+	# Precalculo de tiempos
+	if 'tender' in compiledRelease:
+		if 'tenderPeriod' in compiledRelease['tender']:
+			if 'startDate' in compiledRelease['tender']['tenderPeriod']: 
+				if 'endDate' in compiledRelease['tender']['tenderPeriod']:
+					extra["daysTenderPeriod"] = (dateutil.parser.parse(compiledRelease['tender']['tenderPeriod']['endDate']) - dateutil.parser.parse(compiledRelease['tender']['tenderPeriod']['startDate'])).days
+				if 'datePublished' in compiledRelease['tender']:
+					extra['daysTenderPublish'] = (dateutil.parser.parse(compiledRelease['tender']['tenderPeriod']['startDate']) - dateutil.parser.parse(compiledRelease['tender']['datePublished'])).days
+
 	return extra
 
 def import_to_elasticsearch(files, clean):
 
-	es = elasticsearch.Elasticsearch()
+	es = elasticsearch.Elasticsearch(max_retries=10, retry_on_timeout=True)
 	# es = elasticsearch.Elasticsearch('http://200.13.162.87:9200/')
 
 	# Delete the index
@@ -9867,6 +9876,13 @@ def import_to_elasticsearch(files, clean):
 				if len(compiledRelease["tender"]["additionalProcurementCategories"]) > 0:
 					extra['tenderAdditionalProcurementCategories'] = compiledRelease["tender"]["additionalProcurementCategories"][0]
 
+			if 'procurementMethodDetails' in compiledRelease['tender']:
+				extra["tenderProcurementMethodDetails"] = compiledRelease['tender']['procurementMethodDetails']
+
+		#Obteniendo el sistema
+		if 'sources' in compiledRelease:
+			extra["sources"] = compiledRelease['sources']
+
 		# Obteniendo padres
 		if 'buyer' in compiledRelease:
 
@@ -9936,6 +9952,11 @@ def import_to_elasticsearch(files, clean):
 								extra['objetosGasto'].append(b['classifications']['objeto'])
 
 		for c in compiledRelease["contracts"]:
+			if 'tender' in compiledRelease and 'dateSigned' in c:
+				if 'tenderPeriod' in compiledRelease['tender']:
+					if 'endDate' in compiledRelease['tender']['tenderPeriod']:
+						extra["tiempoContrato"] = (dateutil.parser.parse(c['dateSigned']) - dateutil.parser.parse(compiledRelease['tender']['tenderPeriod']['endDate'])).days
+
 			contract_document = {}
 			contract_document['_id'] = str(uuid.uuid4())
 			contract_document['_index'] = CONTRACT_INDEX
@@ -9944,13 +9965,14 @@ def import_to_elasticsearch(files, clean):
 			contract_document['_source']['extra'] = extra
 
 			if 'implementation' in c:
-				result = elasticsearch.helpers.bulk(es, transaction_generator(contract_document), raise_on_error=False, request_timeout=60)
+				result = elasticsearch.helpers.bulk(es, transaction_generator(contract_document), raise_on_error=False, request_timeout=120)
 				print("transaction", result)
 
 			yield contract_document		
 
 	def generador():
 		contador = 0
+		# years = ['2017', '2018', '2019']
 
 		for file_name in files:
 			print(file_name)
@@ -9960,6 +9982,8 @@ def import_to_elasticsearch(files, clean):
 					if 'compiledRelease' in record:
 						if 'date' in record["compiledRelease"]:
 							year = record['compiledRelease']["date"][0:4]
+							# print("Year:::::::", year)
+
 							if year:
 
 								document = {}
@@ -9971,14 +9995,14 @@ def import_to_elasticsearch(files, clean):
 
 								if 'compiledRelease' in record:
 									if 'contracts' in record['compiledRelease']:
-										result = elasticsearch.helpers.bulk(es, contract_generator(record['compiledRelease']), raise_on_error=False, request_timeout=60)
+										result = elasticsearch.helpers.bulk(es, contract_generator(record['compiledRelease']), raise_on_error=False, request_timeout=120)
 										print("contract", result)
 
 								yield document
 							else:
 								pass
 
-	result = elasticsearch.helpers.bulk(es, generador(), raise_on_error=False, request_timeout=60)
+	result = elasticsearch.helpers.bulk(es, generador(), raise_on_error=False, request_timeout=120)
 
 	print("record", result)
 
@@ -10112,11 +10136,11 @@ print("Fecha y hora inicio de la conversion: ", startDate)
 # generarArchivosEstaticos('archivos_estaticos/releases.json')
 
 # Fin Generando archivos estaticos
+pathArchivo = 'archivos_estaticos/pgexport.json'
+generate_json_valid(pathArchivo, 'records.json')
 
-# generate_json_valid(pathArchivo, 'records.json')
-
-# pathElastic = 'archivos_estaticos/records-sefin.json'
-import_to_elasticsearch([pathElastic,], False)
+pathElastic = 'archivos_estaticos/records.json'
+import_to_elasticsearch([pathElastic,], True)
 
 #Generando records por año: 
 
