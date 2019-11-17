@@ -9403,6 +9403,7 @@ def import_to_elasticsearch(files, clean):
             }
           },
           "items" : {
+			"type": "nested",
             "properties" : {
               "classification" : {
                 "properties" : {
@@ -9957,6 +9958,14 @@ def import_to_elasticsearch(files, clean):
 					if 'endDate' in compiledRelease['tender']['tenderPeriod']:
 						extra["tiempoContrato"] = (dateutil.parser.parse(c['dateSigned']) - dateutil.parser.parse(compiledRelease['tender']['tenderPeriod']['endDate'])).days
 
+			if 'items' in c:
+				for i in c['items']:
+					i['extra'] = {} 
+					if 'unit' in i and 'quantity' in i: 
+						if 'value' in i['unit']:
+							if 'amount' in i['unit']['value']:
+								i['extra']['total'] = float(i['unit']['value']['amount']) * float(i['quantity'])
+
 			contract_document = {}
 			contract_document['_id'] = str(uuid.uuid4())
 			contract_document['_index'] = CONTRACT_INDEX
@@ -9982,7 +9991,6 @@ def import_to_elasticsearch(files, clean):
 					if 'compiledRelease' in record:
 						if 'date' in record["compiledRelease"]:
 							year = record['compiledRelease']["date"][0:4]
-							# print("Year:::::::", year)
 
 							if year:
 
