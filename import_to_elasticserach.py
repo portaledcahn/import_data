@@ -15,8 +15,17 @@ import ijson
 import datetime
 import dateutil.parser, dateutil.tz
 import simplejson as json
+import csv
+import sys
+import hashlib
+import flattentool
+# from libcoveocds.config import LibCoveOCDSConfig
+from zipfile import ZipFile, ZIP_DEFLATED
+import shutil
+import codecs
 
 #Archivos a importar
+carpetaArchivos = 'archivos_estaticos/'
 pathArchivo = 'archivos_estaticos/pgexport.json'
 # pathArchivo = 'archivos_estaticos/pgexport-sefin.json'
 # pathArchivo = '/otros/pgexport.json'
@@ -10093,62 +10102,259 @@ def generarRecordsPorYear(file, year):
 
 	print('Contador: ', contador)
 
+def md5(fname):
+	hash_md5 = hashlib.md5()
+
+	with open(fname, "rb") as f:
+		for chunk in iter(lambda: f.read(4096), b""):
+			hash_md5.update(chunk)
+
+	return hash_md5.hexdigest()
+
+def limpiarArchivos(directorio):
+	listaArchivos = [ f for f in os.listdir(directorio) if f.endswith(".txt") ]
+
+	for a in listaArchivos:
+		open(directorio + a, 'w').close()
+
+def crearDirectorio(directorio):
+	try:
+		os.stat(directorio)
+	except:
+		os.mkdir(directorio)
+
+# def escribirArchivo(directorio, nombre, texto, modo='a'):
+# 	archivoSalida = open(directorio + nombre, modo)
+# 	archivoSalida.write(texto)
+# 	archivoSalida.write('\n')
+# 	archivoSalida.close()
+
+def escribirArchivo(directorio, nombre, texto, modo='a'):
+	archivoSalida = codecs.open(directorio + nombre, modo, 'utf-8')
+	archivoSalida.write(texto)
+	archivoSalida.write('\n')
+	archivoSalida.close()
+
+def aplanarArchivo(ubicacionArchivo, directorio):
+
+	flattentool.flatten(
+		ubicacionArchivo,
+		output_name=directorio,
+		main_sheet_name='releases',
+		root_list_path='releases',
+		root_id='ocid',
+		# schema=carpetaArchivos + 'release-schema.json',
+		disable_local_refs=True,
+		remove_empty_schema_columns=True,
+		root_is_list=False
+	)
+
+	with ZipFile(directorio + '.zip', 'w', compression=ZIP_DEFLATED) as zipfile:
+		for filename in os.listdir(directorio):
+			zipfile.write(os.path.join(directorio, filename), filename)
+	shutil.rmtree(directorio)
+
+	print('flatten ok')
+
+def generarMetaDatosPaquete(paquetes, md5):
+
+	uri = ''
+	license = ''
+	version = '1.1'
+	publisher = {}
+	extensions = []
+	publishedDate = ''
+	publicationPolicy = ''
+	releases = []
+
+	metaDatosPaquete = {}
+
+	fechaActual = datetime.datetime.now(dateutil.tz.tzoffset('UTC', -6*60*60))
+	publishedDate = fechaActual.isoformat()
+
+	for p in paquetes:
+
+		paquete = json.loads(p)
+
+		license = paquete['license']
+		version = paquete['version']
+		publisher = paquete['publisher']
+		publicationPolicy = paquete['publicationPolicy']
+
+		for e in paquete['extensions']:
+			if not e in extensions:
+				extensions.append(e)
+
+	metaDatosPaquete["uri"] = 'http://200.13.162.86/descargas/' + md5 + '.json'
+	metaDatosPaquete["version"] = version
+	metaDatosPaquete["publishedDate"] = publishedDate
+	metaDatosPaquete["publisher"] = publisher
+	metaDatosPaquete["extensions"] = extensions
+	metaDatosPaquete["license"] = license
+	metaDatosPaquete["publicationPolicy"] = publicationPolicy
+
+	return metaDatosPaquete
+
+def generarReleasePackage(paquete, releases, directorio, nombre):
+	contador1 = 0
+	contador2 = 0
+	archivoJson = directorio + nombre
+
+	f = codecs.open(archivoJson, "w", "utf-8")
+
+	#Cargando la data del paquete
+	metaDataPaquete = codecs.open(paquete, "r", "utf-8")
+	metaData = metaDataPaquete.readlines()
+	metaDataPaquete.close()
+
+	for l in metaData[:-1]:
+		f.write(l)
+
+	#Creando una estructura para el listado de releases.
+	f.write(',"releases": [\n')
+
+	#cargando la data de releases 
+	with open(releases) as infile:
+		for linea in infile:
+			contador1 += 1 
+
+	# Quitando la ultima ,
+	with open(releases) as infile:
+		for linea in infile:
+			if contador2 == contador1 - 1:
+				f.write(linea[:-2])
+			else:
+				f.write(linea)
+
+			contador2 += 1
+
+	#Cerrando el archivo json
+	f.write('\n]\n}')
+
+	f.close()
+
 def generarArchivosEstaticos(file):
 	contador = 0
+	archivos = {}
+	archivosProcesar = []
+	nombreArchivo = 'salida.csv'
+	directorioReleases = carpetaArchivos + 'releases/' 
+	directorioHashReleases = directorioReleases + 'hash/'
+	directorioTxtReleases = directorioReleases + 'txt/'
+	directorioPaquetes = directorioReleases + 'paquetes/'
 
-	archivos = [] 
+	numeroColumnaReleaseId = 0
+	numeroColumnaOCID = 1
+	numeroColumnaHASH = 2
+	numeroColumnaPaqueteId = 3
+	numeroColumnaRelease = 4
+	numeroColumnaPaquete = 5
 
+	crearDirectorio(directorioReleases)
+	crearDirectorio(directorioHashReleases)
+	crearDirectorio(directorioTxtReleases)
+	crearDirectorio(directorioPaquetes)
+
+	limpiarArchivos(directorioHashReleases)
+	limpiarArchivos(directorioTxtReleases)
+	limpiarArchivos(directorioPaquetes)
+
+	# Generando archivos md5
+	csv.field_size_limit(sys.maxsize)
 	with open(file) as fp:
-		for release in ijson.items(fp, 'item'):
-			file_name = 'todos.json'
 
-			if 'sources' in release:
-				if len(release["sources"]) > 0:
-					file_name = release["sources"][0]["id"]
+		reader = csv.reader(fp, delimiter='|')
 
-			if 'date' in release:
-				file_name += "_" + release["date"][0:4] + ".json"
-
-			if file_name in Archivos:
-				f = open('archivos_estaticos/releases/' + file_name, "a")
-				f.write(json.dumps(release))
-				f.write(',')
-				f.close()
-			else:
-				f = open('archivos_estaticos/releases/' + file_name, "a")
-				f.write('[')
-				f.close()
-				archivos.append(file_name)
-
-			if contador == 20:
-				break
-
+		for row in reader:
+			llave = ''
 			contador += 1
 
-	for a in archivos:
-		f = open('archivos_estaticos/releases/' + a, "a")
-		f.write(']')
-		f.close()		
+			dataRelease = json.loads(row[numeroColumnaRelease])
+			dataPaquete = json.loads(row[numeroColumnaPaquete])
 
-	print('Contador: ', contador)
+			year = dataRelease["date"][0:4]
+
+			if 'name' in dataPaquete["publisher"]:
+				llave = llave + dataPaquete["publisher"]["name"].replace('/', '').replace(' ', '_')[0:17].lower()
+
+			if 'sources' in dataRelease:
+				if 'id' in dataRelease["sources"][0]:
+					llave = llave + '_' + dataRelease["sources"][0]["id"]
+
+			llave = llave + '_' + year
+
+			if not llave in archivos:
+				archivos[llave] = {}
+				archivos[llave]["paquetesId"] = []
+				archivos[llave]["paquetesData"] = []
+				archivos[llave]["archivo_hash"] = directorioHashReleases + llave + '_hash.txt'
+				archivos[llave]["archivo_text"] = directorioTxtReleases + llave + '_releases.txt'
+				archivos[llave]["archivo_paquete"] = directorioPaquetes + llave + '_paquete.json'
+
+			if not row[numeroColumnaPaqueteId] in archivos[llave]["paquetesId"]:
+				archivos[llave]["paquetesId"].append(row[numeroColumnaPaqueteId])
+				archivos[llave]["paquetesData"].append(row[numeroColumnaPaquete])
+
+			escribirArchivo(directorioHashReleases, llave + '_hash.txt', row[numeroColumnaHASH])
+			escribirArchivo(directorioTxtReleases, llave + '_releases.txt', row[numeroColumnaRelease] + ',')
+
+		print('ya: contador->', contador)
+
+		for llave in archivos:
+			archivo = archivos[llave]
+			archivo["md5_hash"] = md5(archivo["archivo_hash"])
+			archivosProcesar.append(llave)
+			# print(archivos[year])
+
+		#Comparar archivos MD5
+
+		#Generar release package
+		for llave in archivos:
+			if llave in archivosProcesar:
+				metaDataPaquete = generarMetaDatosPaquete(archivos[llave]['paquetesData'], archivos[llave]['md5_hash'])
+				escribirArchivo(directorioPaquetes, llave + '_paquete.json', json.dumps(metaDataPaquete, indent=4, ensure_ascii=False), 'w')
+				generarReleasePackage(archivos[llave]["archivo_paquete"], archivos[llave]["archivo_text"], directorioReleases, llave + '.json')
+				archivos[llave]["json"] = directorioReleases + llave + '.json'
+				archivos[llave]["md5"] = md5(archivos[llave]["json"])
+				escribirArchivo(directorioReleases, llave + '.md5', archivos[llave]["md5"], 'w')
+
+		escribirArchivo(carpetaArchivos, 'archivos.json', json.dumps(archivos, ensure_ascii=False), 'w')
+
+		for llave in archivos:
+			if llave in archivosProcesar:
+				aplanarArchivo(archivos[llave]['json'], directorioReleases + llave)
+				archivos[llave]["excel"] = directorioReleases + llave + '.xlsx'
+				archivos[llave]["csv"] = directorioReleases + llave + '.zip'
+
+
+		# for row in reader:
+		# 	data = json.loads(row[numeroColumnaRelease])
+		# 	year = data["date"][0:4]
+
+		# 	if year in archivosProcesar:
+				
+	# for a in archivos:
+	# 	f = open('archivos_estaticos/releases/' + a, "a")
+	# 	f.write(']')
+	# 	f.close()		
 
 # Importando datos 
 startDate = datetime.datetime.now()
 print("Fecha y hora inicio de la conversion: ", startDate)
 
-
 #Generando archivos estaticos
 
 # file_releases = 'archivos_estaticos/pgexport_releases.json'
 # generate_json_valid(file_releases, 'releases.json')
-# generarArchivosEstaticos('archivos_estaticos/releases.json')
+
+generarArchivosEstaticos('archivos_estaticos/releases.csv')
 
 # Fin Generando archivos estaticos
-pathArchivo = 'archivos_estaticos/pgexport.json'
-generate_json_valid(pathArchivo, 'records.json')
+# pathArchivo = 'archivos_estaticos/pgexport.json'
+# generate_json_valid(pathArchivo, 'records.json')
 
-pathElastic = 'archivos_estaticos/records.json'
-import_to_elasticsearch([pathElastic,], True)
+# pathElastic = 'archivos_estaticos/records.json'
+# import_to_elasticsearch([pathElastic,], True)
 
 #Generando records por año: 
 
