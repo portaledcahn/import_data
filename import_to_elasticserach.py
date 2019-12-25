@@ -19,6 +19,7 @@ import csv
 import sys
 import hashlib
 import flattentool
+import subprocess
 # from libcoveocds.config import LibCoveOCDSConfig
 from zipfile import ZipFile, ZIP_DEFLATED
 import shutil
@@ -37,10 +38,7 @@ CONTRACT_INDEX = 'contract'
 
 TRANSACTION_INDEX = 'transaction'
 
-def contract_to_elastic(contract):
-	pass
-
-def extra_fields(ijson):
+def extra_fields_records(ijson, md5):
 	separador = ' - '
 	extra = {}
 
@@ -126,12 +124,13 @@ def extra_fields(ijson):
 				if 'datePublished' in compiledRelease['tender']:
 					extra['daysTenderPublish'] = (dateutil.parser.parse(compiledRelease['tender']['tenderPeriod']['startDate']) - dateutil.parser.parse(compiledRelease['tender']['datePublished'])).days
 
+	extra["hash_md5"] = md5
+
 	return extra
 
 def import_to_elasticsearch(files, clean):
 
 	es = elasticsearch.Elasticsearch(max_retries=10, retry_on_timeout=True)
-	# es = elasticsearch.Elasticsearch('http://200.13.162.87:9200/')
 
 	# Delete the index
 	if clean:
@@ -9827,22 +9826,22 @@ def import_to_elasticsearch(files, clean):
 
 	if 'error' in result and result['error']['reason'] == 'index EDCA already exists':
 		print('Updating existing index')
-	else:
-		pprint(result)
+	# else:
+		# pprint(result)
 
 	result = es.indices.create(index=CONTRACT_INDEX, body={"mappings": contract_mapping, "settings": settings}, ignore=[400])
 
 	if 'error' in result and result['error']['reason'] == 'index contract already exists':
 		print('Updating existing index')
-	else:
-		pprint(result)
+	# else:
+		# pprint(result)
 
 	result = es.indices.create(index=TRANSACTION_INDEX, body={"mappings": transaction_mapping, "settings": settings}, ignore=[400])
 
 	if 'error' in result and result['error']['reason'] == 'index transaction already exists':
 		print('Updating existing index')
-	else:
-		pprint(result)
+	# else:
+		# pprint(result)
 
 	time.sleep(1)
 
@@ -9976,7 +9975,7 @@ def import_to_elasticsearch(files, clean):
 								i['extra']['total'] = float(i['unit']['value']['amount']) * float(i['quantity'])
 
 			contract_document = {}
-			contract_document['_id'] = str(uuid.uuid4())
+			contract_document['_id'] = compiledRelease["ocid"] + str(c["id"])
 			contract_document['_index'] = CONTRACT_INDEX
 			contract_document['_type'] = 'contract'
 			contract_document['_source'] = c
@@ -9992,36 +9991,57 @@ def import_to_elasticsearch(files, clean):
 		contador = 0
 		# years = ['2017', '2018', '2019']
 
-		for file_name in files:
-			print(file_name)
+		numeroColumnaOCID = 0
+		numeroColumnaHASH = 1
+		numeroColumnaRecord = 2
 
+		for file_name in files:
+			print("Procesando el archivo: ", file_name)
+
+			csv.field_size_limit(sys.maxsize)
 			with open(file_name) as fp:
-				for record in ijson.items(fp, 'item'):
+
+				reader = csv.reader(fp, delimiter='|')
+
+				for row in reader:
+					contador += 1
+
+					record = json.loads(row[numeroColumnaRecord])
+
 					if 'compiledRelease' in record:
 						if 'date' in record["compiledRelease"]:
 							year = record['compiledRelease']["date"][0:4]
 
 							if year:
 
-								document = {}
-								document['_id'] = str(uuid.uuid4())
-								document['_index'] = ES_INDEX
-								document['_type'] = 'record'
-								document['doc'] = record
-								document['extra'] = extra_fields(record)
+								exists = recordExists(row[numeroColumnaOCID], row[numeroColumnaHASH])
 
-								if 'compiledRelease' in record:
-									if 'contracts' in record['compiledRelease']:
-										result = elasticsearch.helpers.bulk(es, contract_generator(record['compiledRelease']), raise_on_error=False, request_timeout=120)
-										print("contract", result)
+								if exists != 0:
+									if exists == 1:
+										print('El record cambio')
+										eliminarDocumentoES(row[numeroColumnaOCID])
 
-								yield document
+									document = {}
+									document['_id'] = row[numeroColumnaOCID]
+									document['_index'] = ES_INDEX
+									document['_type'] = 'record'
+									document['doc'] = record
+									document['extra'] = extra_fields_records(record, row[numeroColumnaHASH])
+
+									if 'compiledRelease' in record:
+										if 'contracts' in record['compiledRelease']:
+											result = elasticsearch.helpers.bulk(es, contract_generator(record['compiledRelease']), raise_on_error=False, request_timeout=120)
+											print("contract", result)
+
+									yield document
+								else:
+									pass
 							else:
 								pass
 
-	result = elasticsearch.helpers.bulk(es, generador(), raise_on_error=False, request_timeout=120)
+	result = elasticsearch.helpers.bulk(es, generador(), raise_on_error=False, request_timeout=30)
 
-	print("record", result)
+	print("records procesados", result)
 
 def generate_json_valid(file, outfile):
 	cantidad_registros = 0
@@ -10122,12 +10142,6 @@ def crearDirectorio(directorio):
 		os.stat(directorio)
 	except:
 		os.mkdir(directorio)
-
-# def escribirArchivo(directorio, nombre, texto, modo='a'):
-# 	archivoSalida = open(directorio + nombre, modo)
-# 	archivoSalida.write(texto)
-# 	archivoSalida.write('\n')
-# 	archivoSalida.close()
 
 def escribirArchivo(directorio, nombre, texto, modo='a'):
 	archivoSalida = codecs.open(directorio + nombre, modo, 'utf-8')
@@ -10338,32 +10352,183 @@ def generarArchivosEstaticos(file):
 	# 	f.write(']')
 	# 	f.close()		
 
-# Importando datos 
-startDate = datetime.datetime.now()
-print("Fecha y hora inicio de la conversion: ", startDate)
+def recordExists(ocid, md5):
+	campos = ['extra.hash_md5']
 
-#Generando archivos estaticos
+	try:
+		es = elasticsearch.Elasticsearch(max_retries=10, retry_on_timeout=True)
+		res = es.get(index="edca", doc_type='record', id=ocid, _source=campos)
 
-# file_releases = 'archivos_estaticos/pgexport_releases.json'
-# generate_json_valid(file_releases, 'releases.json')
+		esMD5 = res['_source']['extra']['hash_md5']
 
-generarArchivosEstaticos('archivos_estaticos/releases.csv')
+		if esMD5 == md5:
+			respuesta = 0 # El record existe y no ha cambiado
+		else:
+			respuesta = 1 # El record existe y cambio
 
-# Fin Generando archivos estaticos
-# pathArchivo = 'archivos_estaticos/pgexport.json'
-# generate_json_valid(pathArchivo, 'records.json')
+	except Exception as e:
+		respuesta = 2 # El record no existe. 
 
-# pathElastic = 'archivos_estaticos/records.json'
-# import_to_elasticsearch([pathElastic,], True)
+	return respuesta
 
-#Generando records por año: 
+def eliminarDocumentoES(ocid):
 
-# generarRecordsPorYear('archivos_estaticos/records-sefin.json', ['2018','2019','2017'])
+	query = {'query': {'term':{'extra.ocid.keyword':ocid}}}
 
-#Datos para la db intermedia 
-endDate = datetime.datetime.now()
-elapsedTime = endDate-startDate
-minutes = (elapsedTime.seconds) / 60
+	try:
+		es = elasticsearch.Elasticsearch(max_retries=10, retry_on_timeout=True)
 
-print("Fecha y hora fin de la conversion: ", endDate)
-print("Tiempo transcurrido: " + str(minutes) + " minutos")
+		if es.indices.exists(index="contract"):
+			res = es.delete_by_query(
+				index="contract",
+				body=query
+			)
+
+		query = {'query': {'term':{'extra.ocid.keyword':ocid}}}
+
+		if es.indices.exists(index="transaction"):
+			res = es.delete_by_query(
+				index="transaction",
+				body=query
+			)
+	except Exception as e:
+		print(e) 
+
+def pruebas(files):
+	print('probando')
+	contador = 0
+	years = ['2017', '2018', '2019']
+
+	a = detectarAniosPorProcesar(files[0])
+
+	print (a)
+
+	# numeroColumnaOCID = 0
+	# numeroColumnaHASH = 1
+	# numeroColumnaRecord = 2
+
+	# eliminarDocumentoES('ocds-lcuori-7GXa9R-CMA-UDH-142-2018-1')
+
+	# recordExists('ocds-lcuori-MLQmwL-CM-047-2018-1', '1')
+
+	# for file_name in files:
+	# 	print(file_name)
+
+	# 	csv.field_size_limit(sys.maxsize)
+	# 	with open(file_name) as fp:
+
+	# 		reader = csv.reader(fp, delimiter='|')
+
+	# 		for row in reader:
+	# 			contador += 1
+
+	# 			record = json.loads(row[numeroColumnaRecord])
+
+				#consultar si 
+
+				# if 'compiledRelease' in record:
+				# 	print("Si compiledRelease")
+				# 	if 'date' in record["compiledRelease"]:
+				# 		year = record['compiledRelease']["date"][0:4]
+				# 		print("ok date")
+				# 		if year:
+				# 			print("ok year")
+				# 			document = {}
+				# 			document['_id'] = str(uuid.uuid4())
+				# 			document['_index'] = ES_INDEX
+				# 			document['_type'] = 'record'
+				# 			document['doc'] = record
+				# 			document['extra'] = extra_fields(record)
+
+				# 			print("ok documento", contador)
+
+				# 			# yield document
+				# 		else:
+				# 			pass
+				# 	else:
+				# 		print("No date")
+				# else:
+				# 	print("No compiledRelease")
+
+'''
+	Parametro de entrada un .csv separado por el delimitador | ej. ocid | hash_md5 | data.json | anio
+	Retorna un listado de los años que han tenido cambios.
+'''
+
+def detectarAniosPorProcesar(archivo):
+	archivos = {}
+	aniosPorProcesar = []
+	contador = 0
+	numeroColumnaOCID = 0
+	numeroColumnaHASH = 1
+	numeroColumnaRecord = 2
+	numeroColumnaYear = 3
+	directorioRecordsHash = carpetaArchivos + 'records_hash/'
+
+	crearDirectorio(directorioRecordsHash)
+	limpiarArchivos(directorioRecordsHash)
+
+	# Generando archivos md5
+	csv.field_size_limit(sys.maxsize)
+	with open(archivo) as fp:
+
+		reader = csv.reader(fp, delimiter='|')
+
+		for row in reader:
+			llave = ''
+			contador += 1
+
+			llave = row[numeroColumnaYear]
+
+			if not llave in archivos:
+				archivos[llave] = {}
+				archivos[llave]["year"] = llave
+				archivos[llave]["archivo_hash"] = directorioRecordsHash + llave + '_hash.txt'
+
+			escribirArchivo(directorioRecordsHash, llave + '_hash.txt', row[numeroColumnaHASH])
+
+	for llave in archivos:
+		archivo = archivos[llave]
+		archivo["md5_hash"] = md5(archivo["archivo_hash"])
+
+	#Comparar archivos MD5
+	archivoJson = directorioRecordsHash + 'year.json'
+
+	try:
+		with open(archivoJson) as json_file:
+			years = json.load(json_file)
+	except Exception as e:
+		years = {}
+
+	for a in archivos:
+		year = archivos[a]
+
+		if a in years:
+			if year["md5_hash"] != years[a]["md5_hash"]:
+				aniosPorProcesar.append(a)
+	
+	#Guardar el archivo .json con los hash
+	escribirArchivo(directorioRecordsHash, 'year.json', json.dumps(archivos, ensure_ascii=False), 'w')
+
+	return aniosPorProcesar
+
+def main():
+	# Tener en cuenta se necesita crear el archivo de recods.csv primero
+	startDate = datetime.datetime.now()
+	print("Fecha de inicio:  ", startDate)
+
+	#Ejecutar comandos aqui
+	archivoRecords = 'archivos_estaticos/records.csv'
+	pruebas([archivoRecords,])
+	# import_to_elasticsearch([archivoRecords,], False)
+
+	endDate = datetime.datetime.now()
+	elapsedTime = endDate-startDate
+	minutes = (elapsedTime.seconds) / 60
+
+	print("Fecha y hora fin: ", endDate)
+	print("Tiempo transcurrido: " + str(minutes) + " minutos")
+
+#Ejecutando el programa.
+main()
+
