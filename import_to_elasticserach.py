@@ -1,15 +1,6 @@
-# import json
-# import argparse
-# import flattentool
-# import shutil
 import uuid
-# import tempfile
 import os
-# import csv
-# import gzip
-from pprint import pprint
 import elasticsearch.helpers
-# import requests
 import time
 import ijson
 import datetime
@@ -20,10 +11,10 @@ import sys
 import hashlib
 import flattentool
 import subprocess
-# from libcoveocds.config import LibCoveOCDSConfig
-from zipfile import ZipFile, ZIP_DEFLATED
 import shutil
 import codecs
+from zipfile import ZipFile, ZIP_DEFLATED
+from pprint import pprint
 
 #Archivos a importar
 carpetaArchivos = 'archivos_estaticos/'
@@ -9821,27 +9812,21 @@ def import_to_elasticsearch(files, clean):
 		}
 	}
 
-	# Create it again
+
 	result = es.indices.create(index=ES_INDEX, body={"mappings": mappings, "settings": settings}, ignore=[400])
 
 	if 'error' in result and result['error']['reason'] == 'index EDCA already exists':
 		print('Updating existing index')
-	# else:
-		# pprint(result)
 
 	result = es.indices.create(index=CONTRACT_INDEX, body={"mappings": contract_mapping, "settings": settings}, ignore=[400])
 
 	if 'error' in result and result['error']['reason'] == 'index contract already exists':
 		print('Updating existing index')
-	# else:
-		# pprint(result)
 
 	result = es.indices.create(index=TRANSACTION_INDEX, body={"mappings": transaction_mapping, "settings": settings}, ignore=[400])
 
 	if 'error' in result and result['error']['reason'] == 'index transaction already exists':
 		print('Updating existing index')
-	# else:
-		# pprint(result)
 
 	time.sleep(1)
 
@@ -9989,14 +9974,15 @@ def import_to_elasticsearch(files, clean):
 
 	def generador():
 		contador = 0
-		# years = ['2017', '2018', '2019']
-
 		numeroColumnaOCID = 0
 		numeroColumnaHASH = 1
 		numeroColumnaRecord = 2
 
 		for file_name in files:
 			print("Procesando el archivo: ", file_name)
+
+			years = detectarAniosPorProcesar(file_name)
+			# years = ['2017', '2018', '2019']
 
 			csv.field_size_limit(sys.maxsize)
 			with open(file_name) as fp:
@@ -10012,13 +9998,12 @@ def import_to_elasticsearch(files, clean):
 						if 'date' in record["compiledRelease"]:
 							year = record['compiledRelease']["date"][0:4]
 
-							if year:
+							if year in years:
 
 								exists = recordExists(row[numeroColumnaOCID], row[numeroColumnaHASH])
 
 								if exists != 0:
 									if exists == 1:
-										print('El record cambio')
 										eliminarDocumentoES(row[numeroColumnaOCID])
 
 									document = {}
@@ -10454,7 +10439,6 @@ def pruebas(files):
 	Parametro de entrada un .csv separado por el delimitador | ej. ocid | hash_md5 | data.json | anio
 	Retorna un listado de los años que han tenido cambios.
 '''
-
 def detectarAniosPorProcesar(archivo):
 	archivos = {}
 	aniosPorProcesar = []
@@ -10519,8 +10503,7 @@ def main():
 
 	#Ejecutar comandos aqui
 	archivoRecords = 'archivos_estaticos/records.csv'
-	pruebas([archivoRecords,])
-	# import_to_elasticsearch([archivoRecords,], False)
+	import_to_elasticsearch([archivoRecords,], False)
 
 	endDate = datetime.datetime.now()
 	elapsedTime = endDate-startDate
