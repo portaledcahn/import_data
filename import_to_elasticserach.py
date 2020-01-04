@@ -13,6 +13,9 @@ import flattentool
 import subprocess
 import shutil
 import codecs
+import requests
+import pandas
+import urllib3
 from zipfile import ZipFile, ZIP_DEFLATED
 from pprint import pprint
 
@@ -28,6 +31,8 @@ ES_INDEX = os.environ.get("ES_INDEX", "edca")
 CONTRACT_INDEX = 'contract' 
 
 TRANSACTION_INDEX = 'transaction'
+
+urllib3.disable_warnings()
 
 def extra_fields_records(ijson, md5):
 	separador = ' - '
@@ -9812,7 +9817,6 @@ def import_to_elasticsearch(files, clean):
 		}
 	}
 
-
 	result = es.indices.create(index=ES_INDEX, body={"mappings": mappings, "settings": settings}, ignore=[400])
 
 	if 'error' in result and result['error']['reason'] == 'index EDCA already exists':
@@ -9829,6 +9833,8 @@ def import_to_elasticsearch(files, clean):
 		print('Updating existing index')
 
 	time.sleep(1)
+
+	# dfTazasCambio = tazasDeCambio()
 
 	def transaction_generator(contract):
 		if '_source' in contract:
@@ -10379,62 +10385,6 @@ def eliminarDocumentoES(ocid):
 	except Exception as e:
 		print(e) 
 
-def pruebas(files):
-	print('probando')
-	contador = 0
-	years = ['2017', '2018', '2019']
-
-	a = detectarAniosPorProcesar(files[0])
-
-	print (a)
-
-	# numeroColumnaOCID = 0
-	# numeroColumnaHASH = 1
-	# numeroColumnaRecord = 2
-
-	# eliminarDocumentoES('ocds-lcuori-7GXa9R-CMA-UDH-142-2018-1')
-
-	# recordExists('ocds-lcuori-MLQmwL-CM-047-2018-1', '1')
-
-	# for file_name in files:
-	# 	print(file_name)
-
-	# 	csv.field_size_limit(sys.maxsize)
-	# 	with open(file_name) as fp:
-
-	# 		reader = csv.reader(fp, delimiter='|')
-
-	# 		for row in reader:
-	# 			contador += 1
-
-	# 			record = json.loads(row[numeroColumnaRecord])
-
-				#consultar si 
-
-				# if 'compiledRelease' in record:
-				# 	print("Si compiledRelease")
-				# 	if 'date' in record["compiledRelease"]:
-				# 		year = record['compiledRelease']["date"][0:4]
-				# 		print("ok date")
-				# 		if year:
-				# 			print("ok year")
-				# 			document = {}
-				# 			document['_id'] = str(uuid.uuid4())
-				# 			document['_index'] = ES_INDEX
-				# 			document['_type'] = 'record'
-				# 			document['doc'] = record
-				# 			document['extra'] = extra_fields(record)
-
-				# 			print("ok documento", contador)
-
-				# 			# yield document
-				# 		else:
-				# 			pass
-				# 	else:
-				# 		print("No date")
-				# else:
-				# 	print("No compiledRelease")
-
 '''
 	Parametro de entrada un .csv separado por el delimitador | ej. ocid | hash_md5 | data.json | anio
 	Retorna un listado de los años que han tenido cambios.
@@ -10496,6 +10446,90 @@ def detectarAniosPorProcesar(archivo):
 
 	return aniosPorProcesar
 
+'''
+	Genera o actualiza el archivo tazas_de_cambio.csv utilizado para convertir monedas USD a HNL.
+	ver https://www.bch.hn/tipo_de_cambiom.php
+	retorna un pandas.dataframe donde las filas son meses y las columnas son anios.
+'''
+def tazasDeCambio():
+	archivo = carpetaArchivos + 'tazas_de_cambio.xls'
+	archivoCSV = carpetaArchivos + 'tazas_de_cambio.csv'
+	serieMensualUSD = 'https://www.bch.hn/esteco/ianalisis/proint.xls'
+
+	try:
+		obtenerArchivoExcel = requests.get(serieMensualUSD, verify=False)
+		open(archivo, 'wb').write(obtenerArchivoExcel.content)
+		tc = pandas.read_excel(io=archivo, sheet_name='proint', header=16, index_col=None, nrows=13)
+		tc = tc.drop(columns=['Unnamed: 0'], axis=1)
+	except Exception as e:
+		tc = pandas.DataFrame([])
+
+	if not tc.empty:
+		tc.to_csv(path_or_buf=archivoCSV, index=False)
+	else:
+		tc = pandas.read_csv(filepath_or_buffer=archivoCSV) 
+
+	return tc
+
+def pruebas(files):
+	print('probando')
+	contador = 0
+	years = ['2017', '2018', '2019']
+
+	numeroColumnaOCID = 0
+	numeroColumnaHASH = 1
+	numeroColumnaRecord = 2
+
+	tc = tazasDeCambio()
+
+	# eliminarDocumentoES('ocds-lcuori-7GXa9R-CMA-UDH-142-2018-1')
+	# recordExists('ocds-lcuori-MLQmwL-CM-047-2018-1', '1')
+
+	for file_name in files:
+
+		csv.field_size_limit(sys.maxsize)
+		with open(file_name) as fp:
+
+			reader = csv.reader(fp, delimiter='|')
+
+			for row in reader:
+				contador += 1
+
+				record = json.loads(row[numeroColumnaRecord])
+
+				if 'compiledRelease' in record:
+				# 	print("Si compiledRelease")
+					if 'date' in record["compiledRelease"]:
+						year = record['compiledRelease']["date"][0:4]
+						month = record['compiledRelease']["date"][5:7]
+
+						print("year", year)
+						print("month", month)
+						print("date", record['compiledRelease']["date"])
+						print("tc", tc.loc[12, int(year)])
+						if contador > 5:
+							exit(0)
+
+				# 		print("ok date")
+				# 		if year:
+				# 			print("ok year")
+				# 			document = {}
+				# 			document['_id'] = str(uuid.uuid4())
+				# 			document['_index'] = ES_INDEX
+				# 			document['_type'] = 'record'
+				# 			document['doc'] = record
+				# 			document['extra'] = extra_fields(record)
+
+				# 			print("ok documento", contador)
+
+				# 			# yield document
+				# 		else:
+				# 			pass
+				# 	else:
+				# 		print("No date")
+				# else:
+				# 	print("No compiledRelease")
+
 def main():
 	# Tener en cuenta se necesita crear el archivo de recods.csv primero
 	startDate = datetime.datetime.now()
@@ -10503,7 +10537,8 @@ def main():
 
 	#Ejecutar comandos aqui
 	archivoRecords = 'archivos_estaticos/records.csv'
-	import_to_elasticsearch([archivoRecords,], False)
+	# import_to_elasticsearch([archivoRecords,], False)
+	pruebas([archivoRecords,])
 
 	endDate = datetime.datetime.now()
 	elapsedTime = endDate-startDate
