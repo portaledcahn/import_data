@@ -124,7 +124,7 @@ def extra_fields_records(ijson, md5):
 
 	return extra
 
-def import_to_elasticsearch(files, clean):
+def import_to_elasticsearch(files, clean, forzarInsercion):
 
 	es = elasticsearch.Elasticsearch(max_retries=10, retry_on_timeout=True)
 
@@ -9521,13 +9521,15 @@ def import_to_elasticsearch(files, clean):
                 }
               },
               "name" : {
-                "type" : "text",
-                "fields" : {
-                  "keyword" : {
-                    "type" : "keyword",
-                    "ignore_above" : 256
-                  }
-                }
+		            "type" : "text",
+					"analyzer": "ngram_analyzer",
+					"search_analyzer": "whitespace_analyzer",
+					"fields" : {
+						"keyword" : {
+							"type" : "keyword",
+							"ignore_above" : 256
+						}
+					}
               }
             }
           },
@@ -9687,13 +9689,15 @@ def import_to_elasticsearch(files, clean):
 			        }
 			      },
 			      "name" : {
-			        "type" : "text",
-			        "fields" : {
-			          "keyword" : {
-			            "type" : "keyword",
-			            "ignore_above" : 256
-			          }
-			        }
+					"type" : "text",
+					"analyzer": "ngram_analyzer",
+					"search_analyzer": "whitespace_analyzer",
+					"fields" : {
+						"keyword" : {
+							"type" : "keyword",
+							"ignore_above" : 256
+						}
+					}
 			      }
 			    }
 			  },
@@ -9709,13 +9713,15 @@ def import_to_elasticsearch(files, clean):
 			        }
 			      },
 			      "name" : {
-			        "type" : "text",
-			        "fields" : {
-			          "keyword" : {
-			            "type" : "keyword",
-			            "ignore_above" : 256
-			          }
-			        }
+						"type" : "text",
+						"analyzer": "ngram_analyzer",
+						"search_analyzer": "whitespace_analyzer",
+						"fields" : {
+							"keyword" : {
+								"type" : "keyword",
+								"ignore_above" : 256
+							}
+						}
 			      }
 			    }
 			  },
@@ -9748,6 +9754,30 @@ def import_to_elasticsearch(files, clean):
 		},
 		"extra" : {
 			"properties": {
+				"buyer" : {
+					"properties" : {
+						"id" : {
+							"type" : "text",
+							"fields" : {
+								"keyword" : {
+									"type" : "keyword",
+									"ignore_above" : 256
+								}
+							}
+						},
+						"name" : {
+							"type" : "text",
+							"analyzer": "ngram_analyzer",
+							"search_analyzer": "whitespace_analyzer",
+							"fields" : {
+								"keyword" : {
+									"type" : "keyword",
+									"ignore_above" : 256
+								}
+							}
+						}
+					}
+				},
 				"buyerFullName" : {
 					"type" : "text",
 					"analyzer": "ngram_analyzer",
@@ -9761,21 +9791,21 @@ def import_to_elasticsearch(files, clean):
 				},
 				"parent1" : {
 					"properties" : {
-					"id" : {
-						"type" : "text",
-						"fields" : {
-							"keyword" : {
-								"type" : "keyword",
-								"ignore_above" : 256
+						"id" : {
+							"type" : "text",
+							"fields" : {
+								"keyword" : {
+									"type" : "keyword",
+									"ignore_above" : 256
+								}
 							}
+						},
+						"name" : {
+							"type" : "text",
+							"analyzer": "ngram_analyzer",
+							"search_analyzer": "whitespace_analyzer"
 						}
-					},
-					"name" : {
-						"type" : "text",
-						"analyzer": "ngram_analyzer",
-						"search_analyzer": "whitespace_analyzer"
 					}
-				}
 				},
 				"parent2" : {
 					"properties" : {
@@ -9812,7 +9842,7 @@ def import_to_elasticsearch(files, clean):
 							"ignore_above" : 256
 						}
 					}
-				},				
+				},
 			}
 		}
 	}
@@ -9834,7 +9864,7 @@ def import_to_elasticsearch(files, clean):
 
 	time.sleep(1)
 
-	# dfTazasCambio = tazasDeCambio()
+	dfTazasCambio = tazasDeCambio()
 
 	def transaction_generator(contract):
 		if '_source' in contract:
@@ -9893,6 +9923,8 @@ def import_to_elasticsearch(files, clean):
 				buyerId = compiledRelease['buyer']['id']
 
 				parentTop = compiledRelease['buyer']
+
+				extra['buyer'] = compiledRelease['buyer']
 
 				for p in compiledRelease['parties']:
 					if p['id'] == buyerId:
@@ -9957,6 +9989,38 @@ def import_to_elasticsearch(files, clean):
 					if 'endDate' in compiledRelease['tender']['tenderPeriod']:
 						extra["tiempoContrato"] = (dateutil.parser.parse(c['dateSigned']) - dateutil.parser.parse(compiledRelease['tender']['tenderPeriod']['endDate'])).days
 
+			if 'value' in c:
+				if 'amount' in c['value']:
+
+					monedaLocal = {}
+					monedaLocal["currency"] = 'HNL'
+
+					if 'dateSigned' in c:
+						date = c['dateSigned']
+					elif 'period' in c:
+						if 'startDate' in c['period']:
+							date = c['period']['startDate']
+					else:
+						date = compiledRelease["date"]
+
+					if 'currency' in c['value']:
+						if c['value']['currency'] == 'USD':
+							cambio = convertirMoneda(dfTazasCambio, date[0:4], date[5:7], c['value']['amount'])
+							
+							if cambio is not None:
+								monedaLocal["amount"] = c['value']['amount'] * cambio
+							else:
+								monedaLocal = c['value']['amount']
+								monedaLocal["currency"] = c['value']['currency']
+
+						if c['value']['currency'] == 'HNL':
+							monedaLocal["amount"] = c['value']['amount']
+					else:
+						monedaLocal["amount"] = c['value']['amount']
+						monedaLocal["currency"] = 'No definido'
+
+					extra['LocalCurrency'] = monedaLocal
+
 			if 'items' in c:
 				for i in c['items']:
 					i['extra'] = {} 
@@ -10004,12 +10068,12 @@ def import_to_elasticsearch(files, clean):
 						if 'date' in record["compiledRelease"]:
 							year = record['compiledRelease']["date"][0:4]
 
-							if year in years:
+							if year in years or forzarInsercion == True:
 
 								exists = recordExists(row[numeroColumnaOCID], row[numeroColumnaHASH])
 
-								if exists != 0:
-									if exists == 1:
+								if exists != 0 or forzarInsercion == True:
+									if exists == 1 or forzarInsercion == True:
 										eliminarDocumentoES(row[numeroColumnaOCID])
 
 									document = {}
@@ -10471,6 +10535,27 @@ def tazasDeCambio():
 
 	return tc
 
+def convertirMoneda(dfTazasDeCambio, anio, mes, monto):
+	montoHNL = None
+
+	try:
+		monthRow = int(mes) - 1 #promedio del mes, en las filas comienza enero es 0, febrero es 1 por eso se resta 1.
+		yearColumn = int(anio)
+	except Exception as e:
+		now = datetime.datetime.now()
+		monthRow = 12 #Promedio anual
+		yearColumn = now.year #promedio del anio acual.
+
+	try:
+		tazaDecambio = dfTazasDeCambio.loc[monthRow, yearColumn]
+	except Exception as e:
+		tazaDecambio = None
+
+	if tazaDecambio is not None:
+		montoHNL = tazaDecambio * monto
+
+	return montoHNL
+
 def pruebas(files):
 	print('probando')
 	contador = 0
@@ -10503,10 +10588,27 @@ def pruebas(files):
 						year = record['compiledRelease']["date"][0:4]
 						month = record['compiledRelease']["date"][5:7]
 
-						print("year", year)
-						print("month", month)
-						print("date", record['compiledRelease']["date"])
-						print("tc", tc.loc[12, int(year)])
+						try:
+							monthRow = int(month) - 1 #promedio del mes, en las filas comienza enero es 0, febrero es 1 por eso se resta 1.
+							yearColumn = int(year)
+						except Exception as e:
+							now = datetime.datetime.now()
+							monthRow = 12 #Promedio anual
+							yearColumn = now.year #promedio del año acual.
+
+						if 'contracts' in record["compiledRelease"]:
+							for c in record["compiledRelease"]["contracts"]:
+								if 'value' in c:
+									if 'amount' in c['value']:
+										cambio = tc.loc[monthRow, yearColumn] * c['value']['amount']
+										
+										print("year", year)
+										print("month", month, 'int:month', int(month))
+										print("date", record['compiledRelease']["date"])
+										print("monto del contrato:", c['value']['amount'])
+										print("tc", convertirMoneda(tc, year, month, c['value']['amount']))
+										print("valor HNL", cambio)
+
 						if contador > 5:
 							exit(0)
 
@@ -10537,8 +10639,8 @@ def main():
 
 	#Ejecutar comandos aqui
 	archivoRecords = 'archivos_estaticos/records.csv'
-	# import_to_elasticsearch([archivoRecords,], False)
-	pruebas([archivoRecords,])
+	import_to_elasticsearch([archivoRecords,], False, True)
+	# pruebas([archivoRecords,])
 
 	endDate = datetime.datetime.now()
 	elapsedTime = endDate-startDate
