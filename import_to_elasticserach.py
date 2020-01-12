@@ -10010,14 +10010,13 @@ def import_to_elasticsearch(files, clean, forzarInsercion):
 							if cambio is not None:
 								monedaLocal["amount"] = c['value']['amount'] * cambio
 							else:
-								monedaLocal = c['value']['amount']
+								monedaLocal["amount"] = c['value']['amount']
 								monedaLocal["currency"] = c['value']['currency']
 
 						if c['value']['currency'] == 'HNL':
 							monedaLocal["amount"] = c['value']['amount']
 					else:
 						monedaLocal["amount"] = c['value']['amount']
-						monedaLocal["currency"] = 'No definido'
 
 					extra['LocalCurrency'] = monedaLocal
 
@@ -10072,8 +10071,10 @@ def import_to_elasticsearch(files, clean, forzarInsercion):
 
 								exists = recordExists(row[numeroColumnaOCID], row[numeroColumnaHASH])
 
-								if exists != 0 or forzarInsercion == True:
-									if exists == 1 or forzarInsercion == True:
+								# print(row[numeroColumnaOCID], ',', exists)
+
+								if exists != 0: #or forzarInsercion == True
+									if exists == 1: #or forzarInsercion == True
 										eliminarDocumentoES(row[numeroColumnaOCID])
 
 									document = {}
@@ -10520,13 +10521,15 @@ def tazasDeCambio():
 	archivoCSV = carpetaArchivos + 'tazas_de_cambio.csv'
 	serieMensualUSD = 'https://www.bch.hn/esteco/ianalisis/proint.xls'
 
-	try:
-		obtenerArchivoExcel = requests.get(serieMensualUSD, verify=False)
-		open(archivo, 'wb').write(obtenerArchivoExcel.content)
-		tc = pandas.read_excel(io=archivo, sheet_name='proint', header=16, index_col=None, nrows=13)
-		tc = tc.drop(columns=['Unnamed: 0'], axis=1)
-	except Exception as e:
-		tc = pandas.DataFrame([])
+	# print('ok')
+	# try:
+	obtenerArchivoExcel = requests.get(serieMensualUSD, verify=False)
+	open(archivo, 'wb').write(obtenerArchivoExcel.content)
+	tc = pandas.read_excel(io=archivo, sheet_name='proint', header=16, index_col=None, nrows=13)
+	tc = tc.drop(columns=['Unnamed: 0'], axis=1)
+	# except Exception as e:
+		# print("error", e)
+		# tc = pandas.DataFrame([])
 
 	if not tc.empty:
 		tc.to_csv(path_or_buf=archivoCSV, index=False)
@@ -10565,7 +10568,7 @@ def pruebas(files):
 	numeroColumnaHASH = 1
 	numeroColumnaRecord = 2
 
-	tc = tazasDeCambio()
+	# tc = tazasDeCambio()
 
 	# eliminarDocumentoES('ocds-lcuori-7GXa9R-CMA-UDH-142-2018-1')
 	# recordExists('ocds-lcuori-MLQmwL-CM-047-2018-1', '1')
@@ -10580,37 +10583,41 @@ def pruebas(files):
 			for row in reader:
 				contador += 1
 
-				record = json.loads(row[numeroColumnaRecord])
+			print("Registros", contador)
+				# record = json.loads(row[numeroColumnaRecord])
 
-				if 'compiledRelease' in record:
-				# 	print("Si compiledRelease")
-					if 'date' in record["compiledRelease"]:
-						year = record['compiledRelease']["date"][0:4]
-						month = record['compiledRelease']["date"][5:7]
+				# if contador == 206001:
+					# print("OCID 206001", row[numeroColumnaOCID])
+					# exit(0)
+				# if 'compiledRelease' in record:
+				# # 	print("Si compiledRelease")
+				# 	if 'date' in record["compiledRelease"]:
+				# 		year = record['compiledRelease']["date"][0:4]
+				# 		month = record['compiledRelease']["date"][5:7]
 
-						try:
-							monthRow = int(month) - 1 #promedio del mes, en las filas comienza enero es 0, febrero es 1 por eso se resta 1.
-							yearColumn = int(year)
-						except Exception as e:
-							now = datetime.datetime.now()
-							monthRow = 12 #Promedio anual
-							yearColumn = now.year #promedio del año acual.
+				# 		try:
+				# 			monthRow = int(month) - 1 #promedio del mes, en las filas comienza enero es 0, febrero es 1 por eso se resta 1.
+				# 			yearColumn = int(year)
+				# 		except Exception as e:
+				# 			now = datetime.datetime.now()
+				# 			monthRow = 12 #Promedio anual
+				# 			yearColumn = now.year #promedio del año acual.
 
-						if 'contracts' in record["compiledRelease"]:
-							for c in record["compiledRelease"]["contracts"]:
-								if 'value' in c:
-									if 'amount' in c['value']:
-										cambio = tc.loc[monthRow, yearColumn] * c['value']['amount']
+				# 		if 'contracts' in record["compiledRelease"]:
+				# 			for c in record["compiledRelease"]["contracts"]:
+				# 				if 'value' in c:
+				# 					if 'amount' in c['value']:
+				# 						cambio = tc.loc[monthRow, yearColumn] * c['value']['amount']
 										
-										print("year", year)
-										print("month", month, 'int:month', int(month))
-										print("date", record['compiledRelease']["date"])
-										print("monto del contrato:", c['value']['amount'])
-										print("tc", convertirMoneda(tc, year, month, c['value']['amount']))
-										print("valor HNL", cambio)
+				# 						print("year", year)
+				# 						print("month", month, 'int:month', int(month))
+				# 						print("date", record['compiledRelease']["date"])
+				# 						print("monto del contrato:", c['value']['amount'])
+				# 						print("tc", convertirMoneda(tc, year, month, c['value']['amount']))
+				# 						print("valor HNL", cambio)
 
-						if contador > 5:
-							exit(0)
+				# 		if contador > 5:
+				# 			exit(0)
 
 				# 		print("ok date")
 				# 		if year:
