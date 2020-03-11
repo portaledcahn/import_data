@@ -5,3 +5,6 @@ python-dateutil==2.8.0
 zipp==0.6.0
 -e git+https://github.com/OpenDataServices/flatten-tool.git#egg=flattentool
 simplejson==3.17.0
+requests==2.22.0
+pandas==0.25.3
+xlrd==1.2.0
