@@ -22,8 +22,8 @@ from pprint import pprint
 import mapeo_es
 
 #Parametros de conexion 
-dbHost="127.0.0.1"
-dbPort="5432"
+dbHost="192.168.43.163"
+dbPort=5432
 dbDatabaseAdmin="portaledcahn_admin"
 dbDatabase="postgres"
 dbUser="postgres"
@@ -58,7 +58,7 @@ def generarRecordHashCSV():
 			inner join package_data pd on r.package_data_id = pd.id
 		order by
 			d.id
-		limit 50
+		--limit 605
     """
     
     try:
@@ -67,7 +67,7 @@ def generarRecordHashCSV():
         # archivoSalida1 = "{0}\\{1}/{2}".format(raiz, carpetaArchivos, nombreArchivo)
         query = "copy ({0}) To STDOUT With CSV DELIMITER '|';".format(select)
 
-        print(archivoSalida)
+        # print(archivoSalida)
 
         con = psycopg2.connect(
             host=dbHost, 
@@ -116,17 +116,20 @@ def generarRecordCSV(year):
 		from record r
 			inner join data d on r.data_id = d.id 
 			inner join package_data pd on r.package_data_id = pd.id
+		where 
+			left(d."data"->'compiledRelease'->>'date',4) = '{0}'
 		order by
 			d.id
-		limit 50
-    """
+		--limit 605
+    """.format(year)
+
     try:
         # raiz = os.path.dirname(os.path.realpath(__file__))
         archivoSalida = os.path.join(carpetaArchivos, nombreArchivo)
         # archivoSalida1 = "{0}\\{1}/{2}".format(raiz, carpetaArchivos, nombreArchivo)
         query = "copy ({0}) To STDOUT With CSV DELIMITER '|';".format(select)
 
-        print(archivoSalida)
+        # print(archivoSalida)
 
         con = psycopg2.connect(
             host=dbHost, 
@@ -468,7 +471,7 @@ def import_to_elasticsearch(files, clean, forzarInsercion):
 
 			file_name = 'archivos_estaticos/records.csv'
 			print("Procesando el archivo: ", file_name, file_year)
-			# generarRecordCSV(year): # Esta linea es importantisima. 
+			generarRecordCSV(file_year)
 
 			csv.field_size_limit(sys.maxsize)
 			with open(file_name) as fp:
@@ -512,7 +515,7 @@ def import_to_elasticsearch(files, clean, forzarInsercion):
 							else:
 								pass
 
-			# actualizarArchivoProcesado(year) # Esta linea igual es importantisima.
+			actualizarArchivoProcesado(file_year, contador) #Indicando que el archivo se proceso completo.
 
 	years = detectarAniosPorProcesar(files[0])
 	# years = ['2017', '2018', '2019']
@@ -652,6 +655,8 @@ def detectarAniosPorProcesar(archivo):
 	for llave in archivos:
 		archivoHash = archivos[llave]
 		archivoHash["md5_hash"] = md5(archivoHash["archivo_hash"])
+		archivoHash["finalizo"] = False
+		archivoHash["nroRecords"] = 0
 
 	#Comparar archivos MD5
 	archivoJson = directorioRecordsHash + 'year.json'
@@ -666,15 +671,47 @@ def detectarAniosPorProcesar(archivo):
 		year = archivos[a]
 
 		if a in years:
+			year["finalizo"] = years[a]["finalizo"]
+			year["nroRecords"] = years[a]["nroRecords"]
+
+			# Si los hash son diferentes entonces se procesa.
 			if year["md5_hash"] != years[a]["md5_hash"]:
 				aniosPorProcesar.append(a)
+			else:
+				# Si no se termino de procesar completo, entonces se procesa de nuevo.
+				if years[a]['finalizo'] == False:
+					aniosPorProcesar.append(a)
 		else:
+			# Si el anio nunca habia sido procesado, entonces se procesa. 
 			aniosPorProcesar.append(a)
 
 	#Guardar el archivo .json con los hash
 	escribirArchivo(directorioRecordsHash, 'year.json', json.dumps(archivos, ensure_ascii=False), 'w')
 
 	return aniosPorProcesar
+
+"""
+	Establece como true en el archivo .json de hash_md5 cuando el proceso finalizo por completo
+	Tambien indica la cantidad de records procesados.
+"""
+def actualizarArchivoProcesado(year, contador):
+	archivos = {}
+	directorioRecordsHash = carpetaArchivos + 'records_hash/'
+	archivoJson = directorioRecordsHash + 'year.json'
+
+	try:
+		with open(archivoJson) as json_file:
+			files_hash = json.load(json_file)
+
+			if year in files_hash:
+				files_hash[year]["finalizo"] = True
+				files_hash[year]["nroRecords"] = contador
+
+			escribirArchivo(directorioRecordsHash, 'year.json', json.dumps(files_hash, ensure_ascii=False), 'w')
+
+	except Exception as e:
+		print("Error", str(e))
+
 
 """
 	Genera o actualiza el archivo tazas_de_cambio.csv utilizado para convertir monedas USD a HNL.
@@ -819,13 +856,10 @@ def main():
 	print("Fecha de inicio:  ", startDate)
 
 	#Ejecutar comandos aqui
-
-	generarRecordHashCSV() # Importantisimo esta linea.
-	# archivoRecordsHash = 'archivos_estaticos/records_hash_year.csv'
-	# archivoRecords = 'archivos_estaticos/records.csv'
-	# import_to_elasticsearch([archivoRecordsHash,], False, False)
+	generarRecordHashCSV() # Gerando archivo hash de records hashs.
+	archivoRecordsHash = 'archivos_estaticos/records_hash_year.csv'
+	import_to_elasticsearch([archivoRecordsHash,], False, False)
 	# pruebas([archivoRecords,])
-	# print(detectarAniosPorProcesar(archivoRecordsHash))
 
 	endDate = datetime.datetime.now()
 	elapsedTime = endDate-startDate
