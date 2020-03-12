@@ -16,13 +16,13 @@ import codecs
 import requests
 import pandas
 import urllib3
-# import psycopg2
+import psycopg2
 from zipfile import ZipFile, ZIP_DEFLATED
 from pprint import pprint
 import mapeo_es
 
 #Parametros de conexion 
-dbHost="192.168.43.163" 
+dbHost="127.0.0.1"
 dbPort="5432"
 dbDatabaseAdmin="portaledcahn_admin"
 dbDatabase="postgres"
@@ -32,17 +32,69 @@ dbPassword="123456"
 #Archivos a importar
 carpetaArchivos = 'archivos_estaticos/'
 pathArchivo = 'archivos_estaticos/pgexport.json'
-# pathArchivo = 'archivos_estaticos/pgexport-sefin.json'
-# pathArchivo = '/otros/pgexport.json'
 pathElastic = 'archivos_estaticos/records.json'
 
 EDCA_INDEX = 'edca'
-
 CONTRACT_INDEX = 'contract' 
-
 TRANSACTION_INDEX = 'transaction'
 
 urllib3.disable_warnings()
+
+"""
+	Funcion que se conecta a PostgreSQL (Kingfisher)
+"""
+def generarRecordHashCSV():
+    con = None
+    nombreArchivo = "records_hash_year.csv"
+    carpetaArchivos = "archivos_estaticos"
+
+    select = """
+		select
+			r.ocid,
+			d.hash_md5,
+			left(d."data"->'compiledRelease'->>'date',4) as "year"
+		from record r
+			inner join data d on r.data_id = d.id 
+			inner join package_data pd on r.package_data_id = pd.id
+		order by
+			d.id
+		limit 50
+    """
+    
+    try:
+        # raiz = os.path.dirname(os.path.realpath(__file__))
+        archivoSalida = os.path.join(carpetaArchivos, nombreArchivo)
+        # archivoSalida1 = "{0}\\{1}/{2}".format(raiz, carpetaArchivos, nombreArchivo)
+        query = "copy ({0}) To STDOUT With CSV DELIMITER '|';".format(select)
+
+        print(archivoSalida)
+
+        con = psycopg2.connect(
+            host=dbHost, 
+            port=dbPort,
+            database=dbDatabase, 
+            user=dbUser, 
+            password=dbPassword
+        )
+
+        cur = con.cursor()
+
+        with open(archivoSalida, 'w') as f_output:
+            cur.copy_expert(query, f_output)
+
+        f_output.close()
+
+    except psycopg2.DatabaseError as e:
+        print(f'Error {e}')
+        sys.exit(1)
+
+    except IOError as e:
+        print(f'Error {e}')
+        sys.exit(1)
+
+    finally:
+        if con:
+            con.close()
 
 """
     Funcion que se conecta a PostgreSQL (Kingfisher)
@@ -103,59 +155,9 @@ def generarRecordCSV(year):
         if con:
             con.close()
 
-def generarRecordHashCSV():
-    con = None
-    nombreArchivo = "records_hash_year.csv"
-    carpetaArchivos = "archivos_estaticos"
-
-    select = """
-		select
-			r.ocid,
-			d.hash_md5,
-			left(d."data"->'compiledRelease'->>'date',4) as "year"
-		from record r
-			inner join data d on r.data_id = d.id 
-			inner join package_data pd on r.package_data_id = pd.id
-		order by
-			d.id
-		limit 50
-    """
-    
-    try:
-        # raiz = os.path.dirname(os.path.realpath(__file__))
-        archivoSalida = os.path.join(carpetaArchivos, nombreArchivo)
-        # archivoSalida1 = "{0}\\{1}/{2}".format(raiz, carpetaArchivos, nombreArchivo)
-        query = "copy ({0}) To STDOUT With CSV DELIMITER '|';".format(select)
-
-        print(archivoSalida)
-
-        con = psycopg2.connect(
-            host=dbHost, 
-            port=dbPort,
-            database=dbDatabase, 
-            user=dbUser, 
-            password=dbPassword
-        )
-
-        cur = con.cursor()
-
-        with open(archivoSalida, 'w') as f_output:
-            cur.copy_expert(query, f_output)
-
-        f_output.close()
-
-    except psycopg2.DatabaseError as e:
-        print(f'Error {e}')
-        sys.exit(1)
-
-    except IOError as e:
-        print(f'Error {e}')
-        sys.exit(1)
-
-    finally:
-        if con:
-            con.close()
-
+"""
+	Agrega campos adicionales al record, precalculos de timepos y conversion de montos.
+"""
 def extra_fields_records(ijson, md5):
 	separador = ' - '
 	extra = {}
@@ -246,6 +248,9 @@ def extra_fields_records(ijson, md5):
 
 	return extra
 
+"""
+	Realiza el ETL de Kingfisher a Elasticsearch
+"""
 def import_to_elasticsearch(files, clean, forzarInsercion):
 
 	es = elasticsearch.Elasticsearch(max_retries=10, retry_on_timeout=True)
@@ -517,85 +522,9 @@ def import_to_elasticsearch(files, clean, forzarInsercion):
 		result = elasticsearch.helpers.bulk(es, generador(year), raise_on_error=False, request_timeout=30)
 		print("records procesados", result)
 
-def generate_json_valid(file, outfile):
-	cantidad_registros = 0
-	contador = 0
-
-	output_file = "archivos_estaticos/" + outfile
-
-	f = open(output_file, "w")
-	f.write('[')
-
-	with open(file) as infile:
-		for line in infile:
-			cantidad_registros += 1
-
-	print('cantidad de registros: ', cantidad_registros)
-
-	with open(file) as infile:
-		for line in infile:
-			contador += 1
-			
-			f.write(line)
-
-			if contador != cantidad_registros:
-				f.write(',')
-			
-	f.write(']')
-	f.close()
-
-# def generarRecordsPorYear(file, year):
-# 	contador = 0
-# 	years = ['2017', '2018', '2019']
-
-# 	archivos = [] 
-
-# 	with open(file) as fp:
-# 		for record in ijson.items(fp, 'item'):
-# 			i_year = ''
-
-# 			file_name = 'todos.json'
-
-# 			if 'compiledRelease' in record:
-# 				if 'sources' in record['compiledRelease']:
-# 					if len(record['compiledRelease']["sources"]) > 0:
-# 							file_name = record['compiledRelease']["sources"][0]["id"]
-
-# 				if 'date' in record['compiledRelease']:
-# 					i_year = record['compiledRelease']["date"][0:4]
-# 					file_name += "_" + i_year + ".json"
-
-# 			# if i_year in years:		
-# 			# 	f = open('archivos_estaticos/records/' + file_name, "a")
-# 			# 	f.write(json.dumps(record))
-# 			# 	f.write(',')
-# 			# 	f.close()
-
-# 			if file_name in archivos:
-# 				f = open('archivos_estaticos/records/' + file_name, "a")
-# 				f.write(json.dumps(record))
-# 				f.write(',')
-# 				f.close()
-# 			else:
-# 				f = open('archivos_estaticos/records/' + file_name, "a")
-# 				f.write('[')
-# 				f.close()
-# 				archivos.append(file_name)
-
-# 			if contador == 20:
-# 				break
-
-# 			contador += 1
-# 			print('contador', contador)
-
-# 	for a in archivos:
-# 		print('Cerrando archivos', a)
-# 		f = open('archivos_estaticos/records/' + a, "a")
-# 		f.write(']')
-# 		f.close()		
-
-# 	print('Contador: ', contador)
-
+"""
+	Genera el hash md5 de un archivo de texto
+"""
 def md5(fname):
 	hash_md5 = hashlib.md5()
 
@@ -605,226 +534,32 @@ def md5(fname):
 
 	return hash_md5.hexdigest()
 
+"""
+	Elimina el contenido de un archivo de texto
+"""
 def limpiarArchivos(directorio):
 	listaArchivos = [ f for f in os.listdir(directorio) if f.endswith(".txt") ]
 
 	for a in listaArchivos:
 		open(directorio + a, 'w').close()
 
+"""
+	Crear un directorio, solo si no existe
+"""
 def crearDirectorio(directorio):
 	try:
 		os.stat(directorio)
 	except:
 		os.mkdir(directorio)
 
+"""
+	Escribe en un archivo de texto/
+"""
 def escribirArchivo(directorio, nombre, texto, modo='a'):
 	archivoSalida = codecs.open(directorio + nombre, modo, 'utf-8')
 	archivoSalida.write(texto)
 	archivoSalida.write('\n')
 	archivoSalida.close()
-
-def aplanarArchivo(ubicacionArchivo, directorio):
-
-	flattentool.flatten(
-		ubicacionArchivo,
-		output_name=directorio,
-		main_sheet_name='releases',
-		root_list_path='releases',
-		root_id='ocid',
-		# schema=carpetaArchivos + 'release-schema.json',
-		disable_local_refs=True,
-		remove_empty_schema_columns=True,
-		root_is_list=False
-	)
-
-	with ZipFile(directorio + '.zip', 'w', compression=ZIP_DEFLATED) as zipfile:
-		for filename in os.listdir(directorio):
-			zipfile.write(os.path.join(directorio, filename), filename)
-	shutil.rmtree(directorio)
-
-	print('flatten ok')
-
-def generarMetaDatosPaquete(paquetes, md5):
-
-	uri = ''
-	license = ''
-	version = '1.1'
-	publisher = {}
-	extensions = []
-	publishedDate = ''
-	publicationPolicy = ''
-	releases = []
-
-	metaDatosPaquete = {}
-
-	fechaActual = datetime.datetime.now(dateutil.tz.tzoffset('UTC', -6*60*60))
-	publishedDate = fechaActual.isoformat()
-
-	for p in paquetes:
-
-		paquete = json.loads(p)
-
-		license = paquete['license']
-		version = paquete['version']
-		publisher = paquete['publisher']
-		publicationPolicy = paquete['publicationPolicy']
-
-		for e in paquete['extensions']:
-			if not e in extensions:
-				extensions.append(e)
-
-	metaDatosPaquete["uri"] = 'http://200.13.162.86/descargas/' + md5 + '.json'
-	metaDatosPaquete["version"] = version
-	metaDatosPaquete["publishedDate"] = publishedDate
-	metaDatosPaquete["publisher"] = publisher
-	metaDatosPaquete["extensions"] = extensions
-	metaDatosPaquete["license"] = license
-	metaDatosPaquete["publicationPolicy"] = publicationPolicy
-
-	return metaDatosPaquete
-
-def generarReleasePackage(paquete, releases, directorio, nombre):
-	contador1 = 0
-	contador2 = 0
-	archivoJson = directorio + nombre
-
-	f = codecs.open(archivoJson, "w", "utf-8")
-
-	#Cargando la data del paquete
-	metaDataPaquete = codecs.open(paquete, "r", "utf-8")
-	metaData = metaDataPaquete.readlines()
-	metaDataPaquete.close()
-
-	for l in metaData[:-1]:
-		f.write(l)
-
-	#Creando una estructura para el listado de releases.
-	f.write(',"releases": [\n')
-
-	#cargando la data de releases 
-	with open(releases) as infile:
-		for linea in infile:
-			contador1 += 1 
-
-	# Quitando la ultima ,
-	with open(releases) as infile:
-		for linea in infile:
-			if contador2 == contador1 - 1:
-				f.write(linea[:-2])
-			else:
-				f.write(linea)
-
-			contador2 += 1
-
-	#Cerrando el archivo json
-	f.write('\n]\n}')
-
-	f.close()
-
-def generarArchivosEstaticos(file):
-	contador = 0
-	archivos = {}
-	archivosProcesar = []
-	nombreArchivo = 'salida.csv'
-	directorioReleases = carpetaArchivos + 'releases/' 
-	directorioHashReleases = directorioReleases + 'hash/'
-	directorioTxtReleases = directorioReleases + 'txt/'
-	directorioPaquetes = directorioReleases + 'paquetes/'
-
-	numeroColumnaReleaseId = 0
-	numeroColumnaOCID = 1
-	numeroColumnaHASH = 2
-	numeroColumnaPaqueteId = 3
-	numeroColumnaRelease = 4
-	numeroColumnaPaquete = 5
-
-	crearDirectorio(directorioReleases)
-	crearDirectorio(directorioHashReleases)
-	crearDirectorio(directorioTxtReleases)
-	crearDirectorio(directorioPaquetes)
-
-	limpiarArchivos(directorioHashReleases)
-	limpiarArchivos(directorioTxtReleases)
-	limpiarArchivos(directorioPaquetes)
-
-	# Generando archivos md5
-	csv.field_size_limit(sys.maxsize)
-	with open(file) as fp:
-
-		reader = csv.reader(fp, delimiter='|')
-
-		for row in reader:
-			llave = ''
-			contador += 1
-
-			dataRelease = json.loads(row[numeroColumnaRelease])
-			dataPaquete = json.loads(row[numeroColumnaPaquete])
-
-			year = dataRelease["date"][0:4]
-
-			if 'name' in dataPaquete["publisher"]:
-				llave = llave + dataPaquete["publisher"]["name"].replace('/', '').replace(' ', '_')[0:17].lower()
-
-			if 'sources' in dataRelease:
-				if 'id' in dataRelease["sources"][0]:
-					llave = llave + '_' + dataRelease["sources"][0]["id"]
-
-			llave = llave + '_' + year
-
-			if not llave in archivos:
-				archivos[llave] = {}
-				archivos[llave]["paquetesId"] = []
-				archivos[llave]["paquetesData"] = []
-				archivos[llave]["archivo_hash"] = directorioHashReleases + llave + '_hash.txt'
-				archivos[llave]["archivo_text"] = directorioTxtReleases + llave + '_releases.txt'
-				archivos[llave]["archivo_paquete"] = directorioPaquetes + llave + '_paquete.json'
-
-			if not row[numeroColumnaPaqueteId] in archivos[llave]["paquetesId"]:
-				archivos[llave]["paquetesId"].append(row[numeroColumnaPaqueteId])
-				archivos[llave]["paquetesData"].append(row[numeroColumnaPaquete])
-
-			escribirArchivo(directorioHashReleases, llave + '_hash.txt', row[numeroColumnaHASH])
-			escribirArchivo(directorioTxtReleases, llave + '_releases.txt', row[numeroColumnaRelease] + ',')
-
-		print('ya: contador->', contador)
-
-		for llave in archivos:
-			archivo = archivos[llave]
-			archivo["md5_hash"] = md5(archivo["archivo_hash"])
-			archivosProcesar.append(llave)
-			# print(archivos[year])
-
-		#Comparar archivos MD5
-
-		#Generar release package
-		for llave in archivos:
-			if llave in archivosProcesar:
-				metaDataPaquete = generarMetaDatosPaquete(archivos[llave]['paquetesData'], archivos[llave]['md5_hash'])
-				escribirArchivo(directorioPaquetes, llave + '_paquete.json', json.dumps(metaDataPaquete, indent=4, ensure_ascii=False), 'w')
-				generarReleasePackage(archivos[llave]["archivo_paquete"], archivos[llave]["archivo_text"], directorioReleases, llave + '.json')
-				archivos[llave]["json"] = directorioReleases + llave + '.json'
-				archivos[llave]["md5"] = md5(archivos[llave]["json"])
-				escribirArchivo(directorioReleases, llave + '.md5', archivos[llave]["md5"], 'w')
-
-		escribirArchivo(carpetaArchivos, 'archivos.json', json.dumps(archivos, ensure_ascii=False), 'w')
-
-		for llave in archivos:
-			if llave in archivosProcesar:
-				aplanarArchivo(archivos[llave]['json'], directorioReleases + llave)
-				archivos[llave]["excel"] = directorioReleases + llave + '.xlsx'
-				archivos[llave]["csv"] = directorioReleases + llave + '.zip'
-
-
-		# for row in reader:
-		# 	data = json.loads(row[numeroColumnaRelease])
-		# 	year = data["date"][0:4]
-
-		# 	if year in archivosProcesar:
-				
-	# for a in archivos:
-	# 	f = open('archivos_estaticos/releases/' + a, "a")
-	# 	f.write(']')
-	# 	f.close()		
 
 """
 	Consulta en el indice de elasticsearch por ocid y hash_md5 si el record existe y si cambio. 
@@ -965,6 +700,9 @@ def tazasDeCambio():
 
 	return tc
 
+"""
+	Conversor de montos de USD a HNL.
+"""
 def convertirMoneda(dfTazasDeCambio, anio, mes, monto):
 	montoHNL = None
 
@@ -986,6 +724,9 @@ def convertirMoneda(dfTazasDeCambio, anio, mes, monto):
 
 	return montoHNL
 
+"""
+	Funcion para realizar pruebas, puede ser eliminada en cualquier momento.
+"""
 def pruebas(files):
 	print('probando')
 	contador = 0
@@ -1062,16 +803,20 @@ def pruebas(files):
 				# else:
 				# 	print("No compiledRelease")
 
+"""
+	Funcion principal, ejecuta las funciones para el proceso de importacion de PostgresSQL (PG) a ElasticSearch(ES).
+"""
 def main():
 	# Tener en cuenta se necesita crear el archivo de recods.csv primero
 	startDate = datetime.datetime.now()
 	print("Fecha de inicio:  ", startDate)
 
 	#Ejecutar comandos aqui
-	# generarRelasesCSV() # Importantisimo esta linea.
-	archivoRecordsHash = 'archivos_estaticos/records_hash_year.csv'
-	archivoRecords = 'archivos_estaticos/records.csv'
-	import_to_elasticsearch([archivoRecordsHash,], False, False)
+
+	generarRecordHashCSV() # Importantisimo esta linea.
+	# archivoRecordsHash = 'archivos_estaticos/records_hash_year.csv'
+	# archivoRecords = 'archivos_estaticos/records.csv'
+	# import_to_elasticsearch([archivoRecordsHash,], False, False)
 	# pruebas([archivoRecords,])
 	# print(detectarAniosPorProcesar(archivoRecordsHash))
 
