@@ -17,12 +17,14 @@ import requests
 import pandas
 import urllib3
 import psycopg2
+import copy
 from zipfile import ZipFile, ZIP_DEFLATED
 from pprint import pprint
 import mapeo_es
 
 #Parametros de conexion 
-dbHost="192.168.43.163"
+dbHost="192.168.1.3"
+# dbHost='localhost'
 dbPort=5432
 dbDatabaseAdmin="portaledcahn_admin"
 dbDatabase="postgres"
@@ -44,11 +46,19 @@ urllib3.disable_warnings()
 	Funcion que se conecta a PostgreSQL (Kingfisher)
 """
 def generarRecordHashCSV():
-    con = None
-    nombreArchivo = "records_hash_year.csv"
-    carpetaArchivos = "archivos_estaticos"
+	con = None
+	nombreArchivo = "records_hash_year.csv"
+	carpetaArchivos = "archivos_estaticos"
 
-    select = """
+	# where = """ where r.ocid in (
+	# 	'ocds-lcuori-NLP4qL-SEFIN-UAP-RI-003-2017-2'
+	# ) """
+
+	where = """ where left(d."data"->'compiledRelease'->>'date',4) = '2016' """
+
+	# where = ""
+
+	select = """
 		select
 			r.ocid,
 			d.hash_md5,
@@ -56,45 +66,42 @@ def generarRecordHashCSV():
 		from record r
 			inner join data d on r.data_id = d.id 
 			inner join package_data pd on r.package_data_id = pd.id
+		{0}
 		order by
-			d.id
-		--limit 605
-    """
-    
-    try:
-        # raiz = os.path.dirname(os.path.realpath(__file__))
-        archivoSalida = os.path.join(carpetaArchivos, nombreArchivo)
-        # archivoSalida1 = "{0}\\{1}/{2}".format(raiz, carpetaArchivos, nombreArchivo)
-        query = "copy ({0}) To STDOUT With CSV DELIMITER '|';".format(select)
+			r.id
+		--limit 1
+	""".format(where)
 
-        # print(archivoSalida)
+	try:
+		archivoSalida = os.path.join(carpetaArchivos, nombreArchivo)
+		query = "copy ({0}) To STDOUT With CSV DELIMITER '|';".format(select)
 
-        con = psycopg2.connect(
-            host=dbHost, 
-            port=dbPort,
-            database=dbDatabase, 
-            user=dbUser, 
-            password=dbPassword
-        )
+		con = psycopg2.connect(
+			host=dbHost, 
+			port=dbPort,
+			database=dbDatabase, 
+			user=dbUser, 
+			password=dbPassword
+		)
 
-        cur = con.cursor()
+		cur = con.cursor()
 
-        with open(archivoSalida, 'w') as f_output:
-            cur.copy_expert(query, f_output)
+		with open(archivoSalida, 'w') as f_output:
+			cur.copy_expert(query, f_output)
 
-        f_output.close()
+		f_output.close()
 
-    except psycopg2.DatabaseError as e:
-        print(f'Error {e}')
-        sys.exit(1)
+	except psycopg2.DatabaseError as e:
+		print(f'Error {e}')
+		sys.exit(1)
 
-    except IOError as e:
-        print(f'Error {e}')
-        sys.exit(1)
+	except IOError as e:
+		print(f'Error {e}')
+		sys.exit(1)
 
-    finally:
-        if con:
-            con.close()
+	finally:
+		if con:
+			con.close()
 
 """
     Funcion que se conecta a PostgreSQL (Kingfisher)
@@ -103,11 +110,18 @@ def generarRecordHashCSV():
     	Anio a extraer, sera obtenido de compiledRelease.date
 """
 def generarRecordCSV(year):
-    con = None
-    nombreArchivo = "records.csv"
-    carpetaArchivos = "archivos_estaticos"
+	con = None
+	nombreArchivo = "records.csv"
+	carpetaArchivos = "archivos_estaticos"
 
-    select = """
+	# where = """ not d."data"->'compiledRelease'->'sources' @> '[{"id":"HN.SIAFI2"}]' """
+	# where = """ and r.ocid in (
+	# 	'ocds-lcuori-NLP4qL-SEFIN-UAP-RI-003-2017-2'
+	# ) """
+
+	where = ""
+
+	select = """
 		select
 			r.ocid,
 			d.hash_md5,
@@ -117,46 +131,42 @@ def generarRecordCSV(year):
 			inner join data d on r.data_id = d.id 
 			inner join package_data pd on r.package_data_id = pd.id
 		where 
-			left(d."data"->'compiledRelease'->>'date',4) = '{0}'
+			left(d."data"->'compiledRelease'->>'date',4) = '{0}' {1}
 		order by
 			d.id
-		--limit 605
-    """.format(year)
+		--limit 1
+	""".format(year, where)
 
-    try:
-        # raiz = os.path.dirname(os.path.realpath(__file__))
-        archivoSalida = os.path.join(carpetaArchivos, nombreArchivo)
-        # archivoSalida1 = "{0}\\{1}/{2}".format(raiz, carpetaArchivos, nombreArchivo)
-        query = "copy ({0}) To STDOUT With CSV DELIMITER '|';".format(select)
+	try:
+		archivoSalida = os.path.join(carpetaArchivos, nombreArchivo)
+		query = "copy ({0}) To STDOUT With CSV DELIMITER '|';".format(select)
 
-        # print(archivoSalida)
+		con = psycopg2.connect(
+			host=dbHost, 
+			port=dbPort,
+			database=dbDatabase, 
+			user=dbUser, 
+			password=dbPassword
+		)
 
-        con = psycopg2.connect(
-            host=dbHost, 
-            port=dbPort,
-            database=dbDatabase, 
-            user=dbUser, 
-            password=dbPassword
-        )
+		cur = con.cursor()
 
-        cur = con.cursor()
+		with open(archivoSalida, 'w') as f_output:
+			cur.copy_expert(query, f_output)
 
-        with open(archivoSalida, 'w') as f_output:
-            cur.copy_expert(query, f_output)
+		f_output.close()
 
-        f_output.close()
+	except psycopg2.DatabaseError as e:
+		print(f'Error {e}')
+		sys.exit(1)
 
-    except psycopg2.DatabaseError as e:
-        print(f'Error {e}')
-        sys.exit(1)
+	except IOError as e:
+		print(f'Error {e}')
+		sys.exit(1)
 
-    except IOError as e:
-        print(f'Error {e}')
-        sys.exit(1)
-
-    finally:
-        if con:
-            con.close()
+	finally:
+		if con:
+			con.close()
 
 """
 	Agrega campos adicionales al record, precalculos de timepos y conversion de montos.
@@ -253,8 +263,12 @@ def extra_fields_records(ijson, md5):
 
 """
 	Realiza el ETL de Kingfisher a Elasticsearch
+	clean = True, borra los indices y toda la data de elasticsearch. 
+	forzarInsercionYear = True, vuelve a procesar un anio aunque el hash de records sea el mismo. 
+	forzarInsercionRecords = True, vuelve a procesar cada record aunque ya este indexando en elasticsearch y el hash sea el mismo.
 """
-def import_to_elasticsearch(files, clean, forzarInsercion):
+def import_to_elasticsearch(files, clean, forzarInsercionYear, forzarInsercionRecords):
+	print("importando a ES")
 
 	es = elasticsearch.Elasticsearch(max_retries=10, retry_on_timeout=True)
 
@@ -429,14 +443,18 @@ def import_to_elasticsearch(files, clean, forzarInsercion):
 							
 							if cambio is not None:
 								monedaLocal["amount"] = c['value']['amount'] * cambio
+								monedaLocal["exchangeRate"] = cambio
 							else:
 								monedaLocal["amount"] = c['value']['amount']
 								monedaLocal["currency"] = c['value']['currency']
+								monedaLocal["exchangeRate"] = 1
 
 						if c['value']['currency'] == 'HNL':
 							monedaLocal["amount"] = c['value']['amount']
+							monedaLocal["exchangeRate"] = 1
 					else:
 						monedaLocal["amount"] = c['value']['amount']
+						monedaLocal["exchangeRate"] = 1
 
 					extra['LocalCurrency'] = monedaLocal
 
@@ -487,14 +505,14 @@ def import_to_elasticsearch(files, clean, forzarInsercion):
 						if 'date' in record["compiledRelease"]:
 							year = record['compiledRelease']["date"][0:4]
 
-							if year == file_year or forzarInsercion == True:
+							if year == file_year or forzarInsercionYear == True:
 
 								exists = recordExists(row[numeroColumnaOCID], row[numeroColumnaHASH])
 
 								# print(row[numeroColumnaOCID], ',', exists)
 
-								if exists != 0: #or forzarInsercion == True
-									if exists == 1: #or forzarInsercion == True
+								if exists != 0 or forzarInsercionRecords == True:
+									if exists == 1 or forzarInsercionRecords == True:
 										eliminarDocumentoES(row[numeroColumnaOCID])
 
 									document = {}
@@ -517,8 +535,9 @@ def import_to_elasticsearch(files, clean, forzarInsercion):
 
 			actualizarArchivoProcesado(file_year, contador) #Indicando que el archivo se proceso completo.
 
+	#Linea importante para procesar solo lo necesario
 	years = detectarAniosPorProcesar(files[0])
-	# years = ['2017', '2018', '2019']
+	# years = ['2018',] # Variable para forzar la insercion de un anio especifico
 
 	print("Por procesar:", years)
 
@@ -657,8 +676,9 @@ def detectarAniosPorProcesar(archivo):
 		archivoHash["md5_hash"] = md5(archivoHash["archivo_hash"])
 		archivoHash["finalizo"] = False
 		archivoHash["nroRecords"] = 0
+		print(archivoHash["md5_hash"])
 
-	#Comparar archivos MD5
+	#Comparar archivos MD5, archivoJson contiene los datos que han sido procesados.
 	archivoJson = directorioRecordsHash + 'year.json'
 
 	try:
@@ -670,23 +690,28 @@ def detectarAniosPorProcesar(archivo):
 	for a in archivos:
 		year = archivos[a]
 
-		if a in years:
+		if a in years: #years contiene los archivos que ya fueron procesados.
 			year["finalizo"] = years[a]["finalizo"]
 			year["nroRecords"] = years[a]["nroRecords"]
 
 			# Si los hash son diferentes entonces se procesa.
 			if year["md5_hash"] != years[a]["md5_hash"]:
+				years[a]["md5_hash"] = year["md5_hash"] #Se actualiza el valor del hash
 				aniosPorProcesar.append(a)
 			else:
 				# Si no se termino de procesar completo, entonces se procesa de nuevo.
 				if years[a]['finalizo'] == False:
 					aniosPorProcesar.append(a)
+				else:
+					archivos[llave] = copy.deepcopy(years[llave])
 		else:
 			# Si el anio nunca habia sido procesado, entonces se procesa. 
 			aniosPorProcesar.append(a)
+			# Tambien se agrega al archivo para seguimiento.
+			years[llave] = archivos[llave]
 
 	#Guardar el archivo .json con los hash
-	escribirArchivo(directorioRecordsHash, 'year.json', json.dumps(archivos, ensure_ascii=False), 'w')
+	escribirArchivo(directorioRecordsHash, 'year.json', json.dumps(years, ensure_ascii=False), 'w')
 
 	return aniosPorProcesar
 
@@ -744,7 +769,7 @@ def tazasDeCambio():
 	Conversor de montos de USD a HNL.
 """
 def convertirMoneda(dfTazasDeCambio, anio, mes, monto):
-	montoHNL = None
+	tc = None
 
 	try:
 		monthRow = int(mes) - 1 #promedio del mes, en las filas comienza enero es 0, febrero es 1 por eso se resta 1.
@@ -760,9 +785,9 @@ def convertirMoneda(dfTazasDeCambio, anio, mes, monto):
 		tazaDecambio = None
 
 	if tazaDecambio is not None:
-		montoHNL = tazaDecambio * monto
+		tc = tazaDecambio
 
-	return montoHNL
+	return tc
 
 """
 	Funcion para realizar pruebas, puede ser eliminada en cualquier momento.
@@ -772,26 +797,39 @@ def pruebas(files):
 	contador = 0
 	years = ['2017', '2018', '2019']
 
-	numeroColumnaOCID = 0
-	numeroColumnaHASH = 1
-	numeroColumnaRecord = 2
+	# generarRecordCSV('2018')
+
+	# tz = tazasDeCambio()
+
+	# print(tz.head())
+	# print(tz[['MES',2018]])
+
+	# generarRecordHashCSV()
+	# years = detectarAniosPorProcesar('archivos_estaticos/records_hash_year.csv')
+	# print(years)
+	# archivoRecordsHash = 'archivos_estaticos/records_hash_year.csv'
+	# import_to_elasticsearch([archivoRecordsHash,], False, False, False)
+
+	# numeroColumnaOCID = 0
+	# numeroColumnaHASH = 1
+	# numeroColumnaRecord = 2
 
 	# tc = tazasDeCambio()
 
 	# eliminarDocumentoES('ocds-lcuori-7GXa9R-CMA-UDH-142-2018-1')
 	# recordExists('ocds-lcuori-MLQmwL-CM-047-2018-1', '1')
 
-	for file_name in files:
+	# for file_name in files:
 
-		csv.field_size_limit(sys.maxsize)
-		with open(file_name) as fp:
+	# 	csv.field_size_limit(sys.maxsize)
+	# 	with open(file_name) as fp:
 
-			reader = csv.reader(fp, delimiter='|')
+	# 		reader = csv.reader(fp, delimiter='|')
 
-			for row in reader:
-				contador += 1
+	# 		for row in reader:
+	# 			contador += 1
 
-			print("Registros", contador)
+	# 		print("Registros", contador)
 				# record = json.loads(row[numeroColumnaRecord])
 
 				# if contador == 206001:
@@ -858,7 +896,9 @@ def main():
 	#Ejecutar comandos aqui
 	generarRecordHashCSV() # Gerando archivo hash de records hashs.
 	archivoRecordsHash = 'archivos_estaticos/records_hash_year.csv'
-	import_to_elasticsearch([archivoRecordsHash,], False, False)
+	import_to_elasticsearch([archivoRecordsHash,], False, False, False)
+	
+	# archivoRecords = 'archivos_estaticos/records.csv'
 	# pruebas([archivoRecords,])
 
 	endDate = datetime.datetime.now()
