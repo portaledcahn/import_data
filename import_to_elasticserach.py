@@ -22,7 +22,10 @@ from zipfile import ZipFile, ZIP_DEFLATED
 from pprint import pprint
 import mapeo_es
 
-#Parametros de conexion 
+#Archivos a importar
+carpetaArchivos = 'archivos_estaticos/'
+
+#Parametros de conexion a kingfisher PostgreSQL
 dbHost="192.168.1.3"
 # dbHost='localhost'
 dbPort=5432
@@ -31,10 +34,12 @@ dbDatabase="postgres"
 dbUser="postgres"
 dbPassword="123456"
 
-#Archivos a importar
-carpetaArchivos = 'archivos_estaticos/'
-pathArchivo = 'archivos_estaticos/pgexport.json'
-pathElastic = 'archivos_estaticos/records.json'
+#Credenciales de Elastic
+ELASTICSEARCH_SERVER_IP = '192.168.1.3'
+ELASTICSEARCH_SERVER_PORT = '9200'
+ELASTICSEARCH_DSL_HOST = '{0}:{1}/'.format(ELASTICSEARCH_SERVER_IP, ELASTICSEARCH_SERVER_PORT)
+ELASTICSEARCH_USERNAME = 'user'
+ELASTICSEARCH_PASS = 'secret'
 
 EDCA_INDEX = 'edca'
 CONTRACT_INDEX = 'contract' 
@@ -51,12 +56,12 @@ def generarRecordHashCSV():
 	carpetaArchivos = "archivos_estaticos"
 
 	# where = """ where r.ocid in (
-	# 	'ocds-lcuori-NLP4qL-SEFIN-UAP-RI-003-2017-2'
+	# 	'ocds-lcuori-jRD4QR-LP-11-2005-2'
 	# ) """
 
-	where = """ where left(d."data"->'compiledRelease'->>'date',4) = '2016' """
+	# where = """ where left(d."data"->'compiledRelease'->>'date',4) in ('2019', '2020') """
 
-	# where = ""
+	where = ""
 
 	select = """
 		select
@@ -69,7 +74,7 @@ def generarRecordHashCSV():
 		{0}
 		order by
 			r.id
-		--limit 1
+		--limit 5
 	""".format(where)
 
 	try:
@@ -114,9 +119,9 @@ def generarRecordCSV(year):
 	nombreArchivo = "records.csv"
 	carpetaArchivos = "archivos_estaticos"
 
-	# where = """ not d."data"->'compiledRelease'->'sources' @> '[{"id":"HN.SIAFI2"}]' """
+	# where = """ and not d."data"->'compiledRelease'->'sources' @> '[{"id":"HN.SIAFI2"}]' """
 	# where = """ and r.ocid in (
-	# 	'ocds-lcuori-NLP4qL-SEFIN-UAP-RI-003-2017-2'
+	# 	'ocds-lcuori-jRD4QR-LP-11-2005-2'
 	# ) """
 
 	where = ""
@@ -134,7 +139,7 @@ def generarRecordCSV(year):
 			left(d."data"->'compiledRelease'->>'date',4) = '{0}' {1}
 		order by
 			d.id
-		--limit 1
+		--limit 5
 	""".format(year, where)
 
 	try:
@@ -270,16 +275,18 @@ def extra_fields_records(ijson, md5):
 def import_to_elasticsearch(files, clean, forzarInsercionYear, forzarInsercionRecords):
 	print("importando a ES")
 
-	es = elasticsearch.Elasticsearch(max_retries=10, retry_on_timeout=True)
+	es = elasticsearch.Elasticsearch(ELASTICSEARCH_DSL_HOST, timeout=120, http_auth=(ELASTICSEARCH_USERNAME, ELASTICSEARCH_PASS))
 
 	# Delete the index
-	if clean:
-		result = es.indices.delete(index=EDCA_INDEX, ignore=[404])
-		pprint(result)
-		result = es.indices.delete(index=CONTRACT_INDEX, ignore=[404])
-		pprint(result)
-		result = es.indices.delete(index=TRANSACTION_INDEX, ignore=[404])
-		pprint(result)
+	if clean is not None:
+		if clean:
+			print("Eliminando indices de ES desde python")
+			result = es.indices.delete(index=EDCA_INDEX, ignore=[404])
+			pprint(result)
+			result = es.indices.delete(index=CONTRACT_INDEX, ignore=[404])
+			pprint(result)
+			result = es.indices.delete(index=TRANSACTION_INDEX, ignore=[404])
+			pprint(result)
 
 	result = es.indices.create(index=EDCA_INDEX, body={"mappings": mapeo_es.edca_mapping, "settings": mapeo_es.settings}, ignore=[400])
 
@@ -407,6 +414,9 @@ def import_to_elasticsearch(files, clean, forzarInsercionYear, forzarInsercionRe
 
 		extra['fuentes'] = []
 		extra['objetosGasto'] = []
+		extra['fuentesONCAE'] = []
+
+		# planning/budget/budgetBreakdown/0/sourceParty/name
 
 		if 'planning' in compiledRelease:
 			if 'budget' in compiledRelease['planning']:
@@ -416,6 +426,10 @@ def import_to_elasticsearch(files, clean, forzarInsercionYear, forzarInsercionRe
 							if 'fuente' in b['classifications']:
 								extra['fuentes'].append(b['classifications']['fuente'])
 								extra['objetosGasto'].append(b['classifications']['objeto'])
+
+						if 'sourceParty' in b:
+							if 'name' in b['sourceParty']:
+								extra['fuentesONCAE'].append(b['sourceParty']['name'])
 
 		for c in compiledRelease["contracts"]:
 			if 'tender' in compiledRelease and 'dateSigned' in c:
@@ -595,7 +609,7 @@ def recordExists(ocid, md5):
 	campos = ['extra.hash_md5']
 
 	try:
-		es = elasticsearch.Elasticsearch(max_retries=10, retry_on_timeout=True)
+		es = elasticsearch.Elasticsearch(ELASTICSEARCH_DSL_HOST, max_retries=10, retry_on_timeout=True, http_auth=(ELASTICSEARCH_USERNAME, ELASTICSEARCH_PASS))
 		res = es.get(index="edca", doc_type='record', id=ocid, _source=campos)
 
 		esMD5 = res['_source']['extra']['hash_md5']
@@ -618,7 +632,7 @@ def eliminarDocumentoES(ocid):
 	query = {'query': {'term':{'extra.ocid.keyword':ocid}}}
 
 	try:
-		es = elasticsearch.Elasticsearch(max_retries=10, retry_on_timeout=True)
+		es = elasticsearch.Elasticsearch(ELASTICSEARCH_DSL_HOST, max_retries=10, retry_on_timeout=True, http_auth=(ELASTICSEARCH_USERNAME, ELASTICSEARCH_PASS))
 
 		if es.indices.exists(index="contract"):
 			res = es.delete_by_query(
@@ -703,12 +717,12 @@ def detectarAniosPorProcesar(archivo):
 				if years[a]['finalizo'] == False:
 					aniosPorProcesar.append(a)
 				else:
-					archivos[llave] = copy.deepcopy(years[llave])
+					year = copy.deepcopy(years[a])
 		else:
 			# Si el anio nunca habia sido procesado, entonces se procesa. 
 			aniosPorProcesar.append(a)
 			# Tambien se agrega al archivo para seguimiento.
-			years[llave] = archivos[llave]
+			years[a] = copy.deepcopy(year)
 
 	#Guardar el archivo .json con los hash
 	escribirArchivo(directorioRecordsHash, 'year.json', json.dumps(years, ensure_ascii=False), 'w')
