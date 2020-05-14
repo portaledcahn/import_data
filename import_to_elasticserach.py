@@ -20,26 +20,22 @@ import psycopg2
 import copy
 from zipfile import ZipFile, ZIP_DEFLATED
 from pprint import pprint
-import mapeo_es
+import mapeo_es, settings
 
 #Archivos a importar
 carpetaArchivos = 'archivos_estaticos/'
 
 #Parametros de conexion a kingfisher PostgreSQL
-dbHost="192.168.1.3"
-# dbHost='localhost'
-dbPort=5432
-dbDatabaseAdmin="portaledcahn_admin"
-dbDatabase="postgres"
-dbUser="postgres"
-dbPassword="123456"
+dbHost=settings.dbHost
+dbPort=settings.dbPort
+dbDatabase=settings.dbDatabase
+dbUser=settings.dbUser
+dbPassword=settings.dbPassword
 
-#Credenciales de Elastic
-ELASTICSEARCH_SERVER_IP = '192.168.1.3'
-ELASTICSEARCH_SERVER_PORT = '9200'
-ELASTICSEARCH_DSL_HOST = '{0}:{1}/'.format(ELASTICSEARCH_SERVER_IP, ELASTICSEARCH_SERVER_PORT)
-ELASTICSEARCH_USERNAME = 'user'
-ELASTICSEARCH_PASS = 'secret'
+#Parametros de conexion a Elasticsearch
+ELASTICSEARCH_DSL_HOST = '{0}:{1}/'.format(settings.ELASTICSEARCH_SERVER_IP, settings.ELASTICSEARCH_SERVER_PORT) #No agregar en esta línea.
+ELASTICSEARCH_USERNAME = settings.ELASTICSEARCH_USERNAME
+ELASTICSEARCH_PASS = settings.ELASTICSEARCH_PASS
 
 EDCA_INDEX = 'edca'
 CONTRACT_INDEX = 'contract' 

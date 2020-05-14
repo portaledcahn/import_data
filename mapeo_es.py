@@ -9550,15 +9550,15 @@ transaction_mapping = {
 		        }
 		      },
 		      "name" : {
-				"type" : "text",
-				"analyzer": "ngram_analyzer",
-				"search_analyzer": "whitespace_analyzer",
-				"fields" : {
-					"keyword" : {
-						"type" : "keyword",
-						"ignore_above" : 256
-					}
-				}
+				    "type" : "text",
+				    "analyzer": "ngram_analyzer",
+				    "search_analyzer": "whitespace_analyzer",
+				    "fields" : {
+              "keyword" : {
+  						  "type" : "keyword",
+  						  "ignore_above" : 256
+					    }
+				    }
 		      }
 		    }
 		  },
@@ -9706,4 +9706,67 @@ transaction_mapping = {
 			},
 		}
 	}
+}
+
+supplier_mapping = {
+  "supplier": {
+    "properties": {
+      "id": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "ignore_above": 256,
+            "type": "keyword"
+          }
+        }
+      },      
+      "name": {
+        "type" : "text",
+        "analyzer": "ngram_analyzer",
+        "search_analyzer": "whitespace_analyzer",
+        "fields" : {
+          "keyword" : {
+            "type" : "keyword",
+            "ignore_above" : 256
+          }
+        }
+      },
+      "total_monto_pagado": {
+        "type": "float"
+      },
+      "menor_monto_pagado": {
+        "type": "float"
+      },
+      "mayor_monto_pagado": {
+        "type": "float"
+      },
+      "promedio_monto_pagado": {
+        "type": "float"
+      },
+      "procesos": {
+        "type": "long"
+      },
+      "fecha_ultimo_proceso": {
+        "type": "date"
+      },
+      "publicador": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "ignore_above": 256,
+            "type": "keyword"
+          }
+        }
+      },      
+      "procesoImportacionId": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "ignore_above": 256,
+            "type": "keyword"
+          }
+        }
+      }      
+    }
+  } 
 }
