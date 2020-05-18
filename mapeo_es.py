@@ -9743,6 +9743,18 @@ supplier_mapping = {
       "promedio_monto_pagado": {
         "type": "float"
       },
+      "total_monto_contratado": {
+        "type": "float"
+      },
+      "menor_monto_contratado": {
+        "type": "float"
+      },
+      "mayor_monto_contratado": {
+        "type": "float"
+      },
+      "promedio_monto_contratado": {
+        "type": "float"
+      },    
       "procesos": {
         "type": "long"
       },

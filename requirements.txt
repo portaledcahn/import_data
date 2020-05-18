@@ -1,4 +1,5 @@
 elasticsearch==7.0.2
+elasticsearch-dsl==7.2.0
 ijson==2.4
 urllib3==1.25.3
 python-dateutil==2.8.0
