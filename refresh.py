@@ -140,6 +140,16 @@ def importarProveedoresONCAE(procesoImportacionId):
 
 	s = Search(using=cliente, index='contract')
 
+	## Solo contratos de ordenes de compra en estado impreso. 
+	sistemaCE = Q('match_phrase', extra__sources__id='catalogo-electronico')
+	estadoOC = ~Q('match_phrase', statusDetails='Impreso')
+	s = s.exclude(sistemaCE & estadoOC)
+
+	## Quitando contratos cancelados en difusion directa. 
+	sistemaDC = Q('match_phrase', extra__sources__id='difusion-directa-contrato')
+	estadoContrato = Q('match_phrase', statusDetails='Cancelado')
+	s = s.exclude(sistemaDC & estadoContrato)
+
 	proveedores = A('terms', field='suppliers.id.keyword')
 	nombre = A('terms', field='suppliers.name.keyword', size=1000)
 	totalMontoContratado = A('sum', field='extra.LocalCurrency.amount')
@@ -175,6 +185,7 @@ def importarProveedoresONCAE(procesoImportacionId):
 				document['_index'] = 'supplier'
 				document['_type'] = 'supplier'
 				document['id'] = p["key"]["id"]
+				document['name'] = nombre["key"]
 				document['procesos'] = nombre["doc_count"]
 				document['total_monto_contratado'] = nombre["total_monto_contratado"]["value"]
 				document['promedio_monto_contratado'] = nombre["promedio_monto_contratado"]["value"]
