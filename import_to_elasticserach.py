@@ -18,7 +18,6 @@ import pandas
 import urllib3
 import psycopg2
 import copy
-from dateutil.relativedelta import relativedelta
 from zipfile import ZipFile, ZIP_DEFLATED
 from pprint import pprint
 import mapeo_es, settings
@@ -269,8 +268,9 @@ def extra_fields_records(ijson, md5):
 	Realiza el ETL de Kingfisher a Elasticsearch
 	forzarInsercionYear = True, vuelve a procesar un anio aunque el hash de records sea el mismo. 
 	forzarInsercionRecords = True, vuelve a procesar cada record aunque ya este indexando en elasticsearch y el hash sea el mismo.
+	listaDeAnios = ['2019', 2020, ... ], permite procesar un anio especificio independiente si tiene cambios o no 
 """
-def import_to_elasticsearch(files, forzarInsercionYear, forzarInsercionRecords):
+def import_to_elasticsearch(files, forzarInsercionYear, forzarInsercionRecords, listaDeAnios=None):
 	print("importando a ES")
 
 	es = elasticsearch.Elasticsearch(ELASTICSEARCH_DSL_HOST, timeout=120, http_auth=(ELASTICSEARCH_USERNAME, ELASTICSEARCH_PASS))
@@ -292,7 +292,8 @@ def import_to_elasticsearch(files, forzarInsercionYear, forzarInsercionRecords):
 
 	time.sleep(1)
 
-	dfTazasCambio = tazasDeCambio()
+	dfTazasCambioUSD = tazasDeCambioUSD()
+	dfTazasCambioEUR = tazasDeCambioEUR()
 
 	def transaction_generator(contract):
 		if '_source' in contract:
@@ -448,7 +449,7 @@ def import_to_elasticsearch(files, forzarInsercionYear, forzarInsercionRecords):
 
 					if 'currency' in c['value']:
 						if c['value']['currency'] == 'USD':
-							cambio = convertirMoneda(dfTazasCambio, date[0:4], date[5:7], c['value']['amount'])
+							cambio = convertirMoneda(dfTazasCambioUSD, date[0:4], date[5:7], c['value']['amount'])
 							
 							if cambio is not None:
 								monedaLocal["amount"] = c['value']['amount'] * cambio
@@ -461,6 +462,17 @@ def import_to_elasticsearch(files, forzarInsercionYear, forzarInsercionRecords):
 						if c['value']['currency'] == 'HNL':
 							monedaLocal["amount"] = c['value']['amount']
 							monedaLocal["exchangeRate"] = 1
+
+						if c['value']['currency'] == 'EUR':
+							cambio = convertirMonedaEUR(dfTazasCambioEUR, date[0:4], c['value']['amount'])
+
+							if cambio is not None:
+								monedaLocal["amount"] = c['value']['amount'] * cambio
+								monedaLocal["exchangeRate"] = cambio
+							else:
+								monedaLocal["amount"] = c['value']['amount']
+								monedaLocal["currency"] = c['value']['currency']
+								monedaLocal["exchangeRate"] = 1
 					else:
 						monedaLocal["amount"] = c['value']['amount']
 						monedaLocal["exchangeRate"] = 1
@@ -518,8 +530,6 @@ def import_to_elasticsearch(files, forzarInsercionYear, forzarInsercionRecords):
 
 								exists = recordExists(row[numeroColumnaOCID], row[numeroColumnaHASH])
 
-								# print(row[numeroColumnaOCID], ',', exists)
-
 								if exists != 0 or forzarInsercionRecords == True:
 									if exists == 1 or forzarInsercionRecords == True:
 										eliminarDocumentoES(row[numeroColumnaOCID])
@@ -544,9 +554,10 @@ def import_to_elasticsearch(files, forzarInsercionYear, forzarInsercionRecords):
 
 			actualizarArchivoProcesado(file_year, contador) #Indicando que el archivo se proceso completo.
 
-	#Linea importante para procesar solo lo necesario
-	years = detectarAniosPorProcesar(files[0])
-	# years = ['2018',] # Variable para forzar la insercion de un anio especifico
+	if forzarInsercionYear == False:
+		years = detectarAniosPorProcesar(files[0])
+	else:
+		years = listaDeAnios
 
 	print("Por procesar:", years)
 
@@ -751,7 +762,7 @@ def actualizarArchivoProcesado(year, contador):
 	ver https://www.bch.hn/tipo_de_cambiom.php
 	retorna un pandas.dataframe donde las filas son meses y las columnas son anios.
 """
-def tazasDeCambio():
+def tazasDeCambioUSD():
 	archivo = carpetaArchivos + 'tazas_de_cambio.xls'
 	archivoCSV = carpetaArchivos + 'tazas_de_cambio.csv'
 	serieMensualUSD = 'https://www.bch.hn/esteco/ianalisis/proint.xls'
@@ -768,8 +779,23 @@ def tazasDeCambio():
 	if not tc.empty:
 		tc.to_csv(path_or_buf=archivoCSV, index=False)
 	else:
-		tc = pandas.read_csv(filepath_or_buffer=archivoCSV) 
+		try:
+			tc = pandas.read_csv(filepath_or_buffer=archivoCSV)
+		except Exception as e:
+			tc = pandas.read_csv(filepath_or_buffer='historico_monedas/USD_to_HNL.csv')
+		 
+	return tc
 
+"""
+	Genera o actualiza el archivo EUR_to_HNL.csv utilizado para convertir monedas EUR a HNL.
+	La fuente de datos es datos historicos Banco Atlantida
+	retorna un pandas.dataframe donde las filas son anios y las columnas son las tazas de conversion.
+"""
+def tazasDeCambioEUR():
+	archivoCSV = 'historico_monedas/EUR_to_HNL.csv'
+
+	tc = pandas.read_csv(filepath_or_buffer=archivoCSV)
+	
 	return tc
 
 """
@@ -793,6 +819,32 @@ def convertirMoneda(dfTazasDeCambio, anio, mes, monto):
 
 	if tazaDecambio is not None:
 		tc = tazaDecambio
+
+	return tc
+
+"""
+	Conversor de montos de EUR a HNL.
+"""
+def convertirMonedaEUR(dfTazasDeCambio, anio, monto):
+	tc = None
+
+	try:
+		year = int(anio)
+	except Exception as e:
+		now = datetime.datetime.now()
+		year = now.year #promedio del anio acual.
+
+	try:
+		tazaDeCambios = dfTazasDeCambio[dfTazasDeCambio["YEAR"] == year]
+
+		if not tazaDeCambios.empty:
+			tc = tazaDeCambios.iloc[0]["EUR_AVG"]
+		else:
+			tc = None
+
+	except Exception as e:
+		print("Error:", e)
+		tc = None
 
 	return tc
 
@@ -896,15 +948,17 @@ def pruebas(files):
 	Funcion principal, ejecuta las funciones para el proceso de importacion de PostgresSQL (PG) a ElasticSearch(ES).
 """
 def main():
-	# Tener en cuenta se necesita crear el archivo de recods.csv primero
 	startDate = datetime.datetime.now()
 	print("\nFecha de inicio:  ", startDate)
 
-	#Ejecutar comandos aqui
+	#Ejecutando
+	forzarInsercionAnios = False
+	forzarInsercionRecords = False
+	forzarImportPorAnios = []
 	generarRecordHashCSV() # Gerando archivo hash de records hashs.
 	archivoRecordsHash = 'archivos_estaticos/records_hash_year.csv'
-	import_to_elasticsearch([archivoRecordsHash,], False, False)
-	
+	import_to_elasticsearch([archivoRecordsHash,], forzarInsercionAnios, forzarInsercionRecords, forzarImportPorAnios)
+
 	# archivoRecords = 'archivos_estaticos/records.csv'
 	# pruebas([archivoRecords,])
 
