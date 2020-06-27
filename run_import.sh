@@ -13,7 +13,7 @@ source bin/activate
 #Accediendo a la carpeta del proyecto
 cd /home/adminaedca/import_elastic/import_data
 
-#Ejecutando conversor para CE
+#Ejecutando importador de kingfisher a elasticsearch
 python import_to_elasticserach.py
 
 echo "Finalizó correctamente"
