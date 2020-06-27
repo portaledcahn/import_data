@@ -18,6 +18,7 @@ import pandas
 import urllib3
 import psycopg2
 import copy
+from dateutil.relativedelta import relativedelta
 from zipfile import ZipFile, ZIP_DEFLATED
 from pprint import pprint
 import mapeo_es, settings
@@ -429,7 +430,7 @@ def import_to_elasticsearch(files, forzarInsercionYear, forzarInsercionRecords):
 			if 'tender' in compiledRelease and 'dateSigned' in c:
 				if 'tenderPeriod' in compiledRelease['tender']:
 					if 'endDate' in compiledRelease['tender']['tenderPeriod']:
-						extra["tiempoContrato"] = (dateutil.parser.parse(c['dateSigned']) - dateutil.parser.parse(compiledRelease['tender']['tenderPeriod']['endDate'])).days
+						extra["tiempoContrato"] = ((dateutil.parser.parse(c['dateSigned'])).date() - (dateutil.parser.parse(compiledRelease['tender']['tenderPeriod']['endDate'])).date()).days
 
 			if 'value' in c:
 				if 'amount' in c['value']:
