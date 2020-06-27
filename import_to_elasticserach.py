@@ -33,7 +33,9 @@ dbUser=settings.dbUser
 dbPassword=settings.dbPassword
 
 #Parametros de conexion a Elasticsearch
-ELASTICSEARCH_DSL_HOST = '{0}:{1}/'.format(settings.ELASTICSEARCH_SERVER_IP, settings.ELASTICSEARCH_SERVER_PORT) #No agregar en esta línea.
+ES_IP = settings.ELASTICSEARCH_SERVER_IP
+ES_PORT = settings.ELASTICSEARCH_SERVER_PORT
+ELASTICSEARCH_DSL_HOST = '{0}:{1}/'.format(ES_IP, ES_PORT)
 ELASTICSEARCH_USERNAME = settings.ELASTICSEARCH_USERNAME
 ELASTICSEARCH_PASS = settings.ELASTICSEARCH_PASS
 
@@ -758,15 +760,14 @@ def tazasDeCambio():
 	archivoCSV = carpetaArchivos + 'tazas_de_cambio.csv'
 	serieMensualUSD = 'https://www.bch.hn/esteco/ianalisis/proint.xls'
 
-	# print('ok')
-	# try:
-	obtenerArchivoExcel = requests.get(serieMensualUSD, verify=False)
-	open(archivo, 'wb').write(obtenerArchivoExcel.content)
-	tc = pandas.read_excel(io=archivo, sheet_name='proint', header=16, index_col=None, nrows=13)
-	tc = tc.drop(columns=['Unnamed: 0'], axis=1)
-	# except Exception as e:
-		# print("error", e)
-		# tc = pandas.DataFrame([])
+	try:
+		obtenerArchivoExcel = requests.get(serieMensualUSD, verify=False)
+		open(archivo, 'wb').write(obtenerArchivoExcel.content)
+		tc = pandas.read_excel(io=archivo, sheet_name='proint', header=16, index_col=None, nrows=13)
+		tc = tc.drop(columns=['Unnamed: 0'], axis=1)
+	except Exception as e:
+		print("error", e)
+		tc = pandas.DataFrame([])
 
 	if not tc.empty:
 		tc.to_csv(path_or_buf=archivoCSV, index=False)
