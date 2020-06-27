@@ -3,7 +3,9 @@ from elasticsearch_dsl import Search, Q, A
 import string, random, copy, datetime
 import mapeo_es, settings
 
-ELASTICSEARCH_DSL_HOST = '{0}:{1}/'.format(settings.ELASTICSEARCH_SERVER_IP, settings.ELASTICSEARCH_SERVER_PORT) #No agregar en esta línea.
+ES_IP = settings.ELASTICSEARCH_SERVER_IP
+ES_PORT = settings.ELASTICSEARCH_SERVER_PORT
+ELASTICSEARCH_DSL_HOST = '{0}:{1}/'.format(ES_IP, ES_PORT) #No agregar en esta línea.
 ELASTICSEARCH_USERNAME = settings.ELASTICSEARCH_USERNAME
 ELASTICSEARCH_PASS = settings.ELASTICSEARCH_PASS
 
@@ -26,7 +28,7 @@ def eliminarProveedoresES(procesoId):
 			res = es.delete_by_query(index="supplier",body=query)
 
 	except Exception as e:
-		print("Exception delete")
+		pass
 
 def scanAggs(search, source_aggs, inner_aggs={}, inner_aggs_2={}, size=10):
 	def run_search(**kwargs):
@@ -60,12 +62,8 @@ def crearIndiceProveedores():
 
 	result = cliente.indices.create(index="supplier", body={"mappings": mapeo_es.supplier_mapping, "settings": mapeo_es.settings}, ignore=[400])
 
-	if 'error' in result and result['error']['type'] == 'resource_already_exists_exception':
-		print('Updating existing index')
-	else:
-		print('Error:', result)
-
-	print("indice ok")
+	if 'error' in result and result['error']['type'] != 'resource_already_exists_exception':
+		print(result)
 
 def importarProveedoresSEFIN(procesoImportacionId):
 	cliente = Elasticsearch(
@@ -127,9 +125,10 @@ def importarProveedoresSEFIN(procesoImportacionId):
 
 			yield document
 
-		print("Cantidad de proveedores importados fuente SIAFI ", contador)
+		print("SIAFI:", contador)
 
-	result = helpers.bulk(cliente, importarDatos(procesoImportacionId), raise_on_error=False, request_timeout=120)
+	if cliente.indices.exists(index="transaction"):
+		result = helpers.bulk(cliente, importarDatos(procesoImportacionId), raise_on_error=False, request_timeout=120)
 
 def importarProveedoresONCAE(procesoImportacionId):
 	cliente = Elasticsearch(
@@ -205,17 +204,17 @@ def importarProveedoresONCAE(procesoImportacionId):
 				contador = contador + 1
 				yield document
 
-		print("Cantidad de proveedores importados fuente ONCAE", contador)
+		print("ONCAE:", contador)
 
-	result = helpers.bulk(cliente, importarDatos(procesoImportacionId), raise_on_error=False, request_timeout=120)
+	if cliente.indices.exists(index="contract"):
+		result = helpers.bulk(cliente, importarDatos(procesoImportacionId), raise_on_error=False, request_timeout=120)
 
 if __name__ == '__main__':
-
-	startDate = datetime.datetime.now()
-	print("Fecha de inicio:  ", startDate)
-
 	procesoImportacionId = cadenaAleatoria(10)
-	print("Proces de importación: ", procesoImportacionId)
+	startDate = datetime.datetime.now()
+
+	print("\nRefresh proveedores: ", procesoImportacionId)
+	print("Fecha de inicio:  ", startDate)
 
 	crearIndiceProveedores()
 	importarProveedoresSEFIN(procesoImportacionId)
@@ -228,5 +227,3 @@ if __name__ == '__main__':
 
 	print("Fecha y hora fin: ", endDate)
 	print("Tiempo transcurrido: " + str(minutes) + " minutos")
-
-	print("Refresh proveedores ok.")

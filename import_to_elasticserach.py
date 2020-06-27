@@ -266,25 +266,13 @@ def extra_fields_records(ijson, md5):
 
 """
 	Realiza el ETL de Kingfisher a Elasticsearch
-	clean = True, borra los indices y toda la data de elasticsearch. 
 	forzarInsercionYear = True, vuelve a procesar un anio aunque el hash de records sea el mismo. 
 	forzarInsercionRecords = True, vuelve a procesar cada record aunque ya este indexando en elasticsearch y el hash sea el mismo.
 """
-def import_to_elasticsearch(files, clean, forzarInsercionYear, forzarInsercionRecords):
+def import_to_elasticsearch(files, forzarInsercionYear, forzarInsercionRecords):
 	print("importando a ES")
 
 	es = elasticsearch.Elasticsearch(ELASTICSEARCH_DSL_HOST, timeout=120, http_auth=(ELASTICSEARCH_USERNAME, ELASTICSEARCH_PASS))
-
-	# Delete the index
-	if clean is not None:
-		if clean:
-			print("Eliminando indices de ES desde python")
-			result = es.indices.delete(index=EDCA_INDEX, ignore=[404])
-			pprint(result)
-			result = es.indices.delete(index=CONTRACT_INDEX, ignore=[404])
-			pprint(result)
-			result = es.indices.delete(index=TRANSACTION_INDEX, ignore=[404])
-			pprint(result)
 
 	result = es.indices.create(index=EDCA_INDEX, body={"mappings": mapeo_es.edca_mapping, "settings": mapeo_es.settings}, ignore=[400])
 
@@ -347,6 +335,14 @@ def import_to_elasticsearch(files, clean, forzarInsercionYear, forzarInsercionRe
 
 			if 'procurementMethodDetails' in compiledRelease['tender']:
 				extra["tenderProcurementMethodDetails"] = compiledRelease['tender']['procurementMethodDetails']
+
+			if 'tenderPeriod' in compiledRelease['tender']:
+				if 'startDate' in compiledRelease['tender']['tenderPeriod']:
+					extra["tenderPeriodStartDate"] = compiledRelease['tender']['tenderPeriod']['startDate']
+
+				if 'endDate' in compiledRelease['tender']['tenderPeriod']:
+					extra["tenderPeriodEndDate"] = compiledRelease['tender']['tenderPeriod']['endDate']
+
 
 		#Obteniendo el sistema
 		if 'sources' in compiledRelease:
@@ -487,7 +483,7 @@ def import_to_elasticsearch(files, clean, forzarInsercionYear, forzarInsercionRe
 
 			if 'implementation' in c:
 				result = elasticsearch.helpers.bulk(es, transaction_generator(contract_document), raise_on_error=False, request_timeout=120)
-				print("transaction", result)
+				# print("transaction", result)
 
 			yield contract_document		
 
@@ -537,7 +533,7 @@ def import_to_elasticsearch(files, clean, forzarInsercionYear, forzarInsercionRe
 									if 'compiledRelease' in record:
 										if 'contracts' in record['compiledRelease']:
 											result = elasticsearch.helpers.bulk(es, contract_generator(record['compiledRelease']), raise_on_error=False, request_timeout=120)
-											print("contract", result)
+											# print("contract", result)
 
 									yield document
 								else:
@@ -688,7 +684,6 @@ def detectarAniosPorProcesar(archivo):
 		archivoHash["md5_hash"] = md5(archivoHash["archivo_hash"])
 		archivoHash["finalizo"] = False
 		archivoHash["nroRecords"] = 0
-		print(archivoHash["md5_hash"])
 
 	#Comparar archivos MD5, archivoJson contiene los datos que han sido procesados.
 	archivoJson = directorioRecordsHash + 'year.json'
@@ -902,12 +897,12 @@ def pruebas(files):
 def main():
 	# Tener en cuenta se necesita crear el archivo de recods.csv primero
 	startDate = datetime.datetime.now()
-	print("Fecha de inicio:  ", startDate)
+	print("\nFecha de inicio:  ", startDate)
 
 	#Ejecutar comandos aqui
 	generarRecordHashCSV() # Gerando archivo hash de records hashs.
 	archivoRecordsHash = 'archivos_estaticos/records_hash_year.csv'
-	import_to_elasticsearch([archivoRecordsHash,], False, False, False)
+	import_to_elasticsearch([archivoRecordsHash,], False, False)
 	
 	# archivoRecords = 'archivos_estaticos/records.csv'
 	# pruebas([archivoRecords,])
