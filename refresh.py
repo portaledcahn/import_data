@@ -282,9 +282,6 @@ def agregarCampoEnContratos():
 			else:
 				print("Record no encontrado")
 
-			if contador == 1:
-				break
-
 		contador += 1 
 
 	print("\nContratos: ", contador)
@@ -300,8 +297,6 @@ if __name__ == '__main__':
 	importarProveedoresSEFIN(procesoImportacionId)
 	importarProveedoresONCAE(procesoImportacionId)
 	eliminarProveedoresES(procesoImportacionId)
-
-	# agregarCampoEnContratos()
 
 	endDate = datetime.datetime.now()
 	elapsedTime = endDate-startDate
