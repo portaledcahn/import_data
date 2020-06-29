@@ -5,7 +5,7 @@ import mapeo_es, settings
 
 ES_IP = settings.ELASTICSEARCH_SERVER_IP
 ES_PORT = settings.ELASTICSEARCH_SERVER_PORT
-ELASTICSEARCH_DSL_HOST = '{0}:{1}/'.format(ES_IP, ES_PORT) #No agregar en esta línea.
+ELASTICSEARCH_DSL_HOST = '{0}:{1}/'.format(ES_IP, ES_PORT)
 ELASTICSEARCH_USERNAME = settings.ELASTICSEARCH_USERNAME
 ELASTICSEARCH_PASS = settings.ELASTICSEARCH_PASS
 
@@ -209,6 +209,86 @@ def importarProveedoresONCAE(procesoImportacionId):
 	if cliente.indices.exists(index="contract"):
 		result = helpers.bulk(cliente, importarDatos(procesoImportacionId), raise_on_error=False, request_timeout=120)
 
+def obtenerRecord(ocid):
+	try:
+		campos = ['doc.compiledRelease']
+		
+		es = Elasticsearch(
+			ELASTICSEARCH_DSL_HOST, 
+			timeout=120, 
+			http_auth=(ELASTICSEARCH_USERNAME, ELASTICSEARCH_PASS)
+		)
+
+		res = es.get(index="edca", doc_type='record', id=ocid, _source=campos)
+
+		respuesta = res["_source"]
+
+	except Exception as e:
+		print("Error", e)
+		respuesta = None # El record no existe. 
+
+	return respuesta
+
+def guardarConratoES(hitId, contrato):
+	cliente = Elasticsearch(
+		ELASTICSEARCH_DSL_HOST, 
+		timeout=120, 
+		http_auth=(ELASTICSEARCH_USERNAME, ELASTICSEARCH_PASS)
+	)
+
+	cliente.update(
+		index='contract',
+		doc_type='contract',
+		id=hitId,
+		body={
+			"doc":contrato
+		}
+	)
+
+def agregarCampoEnContratos():
+	cliente = Elasticsearch(
+		ELASTICSEARCH_DSL_HOST, 
+		timeout=120, 
+		http_auth=(ELASTICSEARCH_USERNAME, ELASTICSEARCH_PASS)
+	)
+
+	s = Search(using=cliente, index='contract')
+
+	contador = 0
+
+	contratos = helpers.scan(
+		cliente, 
+		index="contract"
+	)
+
+	for hit in contratos:
+		hitId = hit["_id"]
+
+		contrato = hit["_source"]
+
+		if 'extra' in contrato and 'ocid' in contrato['extra']:
+			ocid = contrato["extra"]["ocid"]
+
+			record = obtenerRecord(ocid)
+
+			if record is not None: 
+				if 'compiledRelease' in record["doc"]:
+					compiledRelease = record["doc"]["compiledRelease"]
+
+					if 'tender' in compiledRelease:
+						if 'legalBasis' in compiledRelease["tender"]:
+							contrato["extra"]["tenderLegalBasis"] = compiledRelease["tender"]["legalBasis"]
+							guardarConratoES(hitId, contrato)
+			else:
+				print("Record no encontrado")
+
+			if contador == 1:
+				break
+
+		contador += 1 
+
+	print("\nContratos: ", contador)
+
 if __name__ == '__main__':
 	procesoImportacionId = cadenaAleatoria(10)
 	startDate = datetime.datetime.now()
@@ -220,6 +300,8 @@ if __name__ == '__main__':
 	importarProveedoresSEFIN(procesoImportacionId)
 	importarProveedoresONCAE(procesoImportacionId)
 	eliminarProveedoresES(procesoImportacionId)
+
+	# agregarCampoEnContratos()
 
 	endDate = datetime.datetime.now()
 	elapsedTime = endDate-startDate
