@@ -345,6 +345,8 @@ def import_to_elasticsearch(files, forzarInsercionYear, forzarInsercionRecords, 
 				if 'endDate' in compiledRelease['tender']['tenderPeriod']:
 					extra["tenderPeriodEndDate"] = compiledRelease['tender']['tenderPeriod']['endDate']
 
+				if 'legalBasis' in compiledRelease["tender"]:
+					extra["tenderLegalBasis"] = compiledRelease["tender"]["legalBasis"]
 
 		#Obteniendo el sistema
 		if 'sources' in compiledRelease:
