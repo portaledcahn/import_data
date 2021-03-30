@@ -564,7 +564,7 @@ def import_to_elasticsearch(files, forzarInsercionYear, forzarInsercionRecords, 
 	print("Por procesar:", years)
 
 	for year in years:
-		result = elasticsearch.helpers.bulk(es, generador(year), raise_on_error=False, request_timeout=30)
+		result = elasticsearch.helpers.bulk(es, generador(year), raise_on_error=False, request_timeout=120)
 		print("records procesados", result)
 
 """
@@ -767,7 +767,7 @@ def actualizarArchivoProcesado(year, contador):
 def tazasDeCambioUSD():
 	archivo = carpetaArchivos + 'tazas_de_cambio.xls'
 	archivoCSV = carpetaArchivos + 'tazas_de_cambio.csv'
-	serieMensualUSD = 'https://www.bch.hn/esteco/ianalisis/proint.xls'
+	serieMensualUSD = settings.urlTasasCabioBancoCentral
 
 	try:
 		obtenerArchivoExcel = requests.get(serieMensualUSD, verify=False)
